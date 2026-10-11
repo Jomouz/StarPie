@@ -635,11 +635,7 @@ internal static class PluginHost
 
         if (!stop.IsFullyStopped)
         {
-            return new PluginUninstallResult
-            {
-                Success = false,
-                Error = $"插件尚未完全停止，不能删除文件：{stop.Message}",
-            };
+            return PluginUninstallResult.FromStopFailure(stop);
         }
 
         try
@@ -671,12 +667,13 @@ internal static class PluginHost
                         AppLogger.LogWarn(
                             $"[plugin] {pluginId} 目录被占用，已挂起删除，将于下次启动时清理：{deleteError.Message}");
                     }
-                    catch
+                    catch (Exception moveError)
                     {
                         return new PluginUninstallResult
                         {
                             Success = false,
-                            Error = $"删除插件目录失败（文件被占用）：{deleteError.Message}。请重启 StarPie 后重试。",
+                            Error = I18n.TF("PluginsUninstallDirectoryDeleteFailed", deleteError.Message),
+                            RestartSuggested = IsFileInUse(deleteError) || IsFileInUse(moveError),
                         };
                     }
                 }
