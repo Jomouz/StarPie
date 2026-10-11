@@ -429,14 +429,14 @@ public partial class App : Application
 	}
 
 	/// <summary>普通重启：等待当前进程退出后启动同一路径的 StarPie。</summary>
-	public static bool Restart()
+	public static bool Restart(bool showSettingsWindow = false)
 	{
 		try
 		{
 			string fileName = Environment.ProcessPath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "StarPie.exe");
 			using Process current = Process.GetCurrentProcess();
 			using Process? next = Process.Start(AppRestartCoordinator.CreateStartInfo(
-				fileName, current.Id, current.StartTime.ToUniversalTime().Ticks));
+				fileName, current.Id, current.StartTime.ToUniversalTime().Ticks, showSettingsWindow));
 			if (next == null) return false;
 			ExitApplication();
 			return true;

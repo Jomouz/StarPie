@@ -8107,7 +8107,7 @@ public partial class SettingsWindow : Window
 			MessageBoxResult.No);
 		if (choice != MessageBoxResult.Yes) return true;
 
-		if (App.Restart()) return true;
+		if (App.Restart(showSettingsWindow: true)) return true;
 
 		AppMessageBox.Show(this, I18n.TF("PluginsRestartFailed", I18n.T("PluginsRestartStartFailed")),
 			I18n.T("PluginsRestartTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
