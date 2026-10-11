@@ -16,7 +16,7 @@ namespace WinPieGestures.Plugins;
 /// <para>
 /// 负责以有界、安全、独立于具体资产下载通道的策略发现官方已发布的候选版本列表。
 /// 优先查询官方 Atom Feed，失败或受限时以有界官方 Releases API 补充，
-/// 严格过滤草稿与异常源，统一按发布时间排序，不将 latest 稳定发布与全集等同。
+/// 严格校验来源，按发布时间或 Feed 顺序发现候选，不将编辑时间或 latest 稳定发布与全集等同。
 /// </para>
 /// </summary>
 internal static class OfficialPluginReleaseDiscovery
@@ -27,7 +27,7 @@ internal static class OfficialPluginReleaseDiscovery
     internal const int MaxCandidates = 8;
 
     /// <summary>
-    /// 发现所有可用的官方发布候选标签（按时间降序排列，最多返回 MaxCandidates 项）。
+    /// 发现官方发布候选标签（有可靠时间线时按发布时间排序，否则保留 Feed 顺序，最多 MaxCandidates 项）。
     /// </summary>
     public static async Task<IReadOnlyList<string>> DiscoverCandidateTagsAsync(
         HttpClient client,
@@ -163,7 +163,7 @@ internal static class OfficialPluginReleaseDiscovery
 
     /// <summary>
     /// 解析 Atom Feed 中的发布条目。
-    /// 优先取 published，缺失/无效时回退至 updated。
+    /// published 全部有效时按发布时间排序，否则保留 Feed 顺序；updated 仅表示编辑时间。
     /// </summary>
     internal static List<string> ParseAtomReleaseTags(string feed)
     {
@@ -193,24 +193,26 @@ internal static class OfficialPluginReleaseDiscovery
                 continue;
             }
 
-            // Atom 优先取 published，缺失/无效时回落 updated
             DateTimeOffset? date = null;
             string? pubText = entry.Element(atom + "published")?.Value;
-            string? updatedText = entry.Element(atom + "updated")?.Value;
-
             if (TryParseUtcDate(pubText, out DateTimeOffset pubDate))
             {
                 date = pubDate;
-            }
-            else if (TryParseUtcDate(updatedText, out DateTimeOffset updatedDate))
-            {
-                date = updatedDate;
             }
 
             candidates.Add((tag, date));
         }
 
-        return SortAndDeduplicateCandidates(candidates);
+        // GitHub 的 Release Feed 通常只给 updated。编辑旧 Release 会改变该时间，
+        // 但不能据此将旧目录提升为最新；缺少完整发布时间线时沿用 Feed 的候选顺序。
+        if (candidates.All(candidate => candidate.Date.HasValue))
+        {
+            return SortAndDeduplicateCandidates(candidates);
+        }
+        return candidates.Select(candidate => candidate.Tag)
+            .Distinct(StringComparer.Ordinal)
+            .Take(MaxCandidates)
+            .ToList();
     }
 
     /// <summary>

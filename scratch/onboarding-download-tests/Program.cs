@@ -40,18 +40,27 @@ public static class Program
             Directory.CreateDirectory(scanRoot);
 
             PluginPaths.OverrideRootsForTesting(hostRoot, scanRoot);
-            PluginHost.HeadlessMode = false;
+            bool discoveryOnly = args.Contains("--release-discovery-only", StringComparer.Ordinal);
+            PluginHost.HeadlessMode = discoveryOnly;
             CleanRegistry();
 
-            TestChannelNormalizationAndUrlHelper();
-            TestZeroNetworkAndZeroConfigMutationOnDialog();
-            TestBatchSnapshotImmutabilityAndRetrySwitch();
-            TestGitHubDownMirrorDiscoveryAndCatalogFetch().GetAwaiter().GetResult();
-            TestPartialFailureChannelSwitchAndZeroNetworkLocalRetry().GetAwaiter().GetResult();
-            TestCorruptedSpkgRejectionAndCancellationCleanup().GetAwaiter().GetResult();
-            TestDialogControlsStateAndFourLanguageLocalization();
-            TestSafetyMutationVerification();
+            if (discoveryOnly)
+            {
+                TestGitHubDownMirrorDiscoveryAndCatalogFetch().GetAwaiter().GetResult();
+            }
+            else
+            {
+                TestChannelNormalizationAndUrlHelper();
+                TestZeroNetworkAndZeroConfigMutationOnDialog();
+                TestBatchSnapshotImmutabilityAndRetrySwitch();
+                TestGitHubDownMirrorDiscoveryAndCatalogFetch().GetAwaiter().GetResult();
+                TestPartialFailureChannelSwitchAndZeroNetworkLocalRetry().GetAwaiter().GetResult();
+                TestCorruptedSpkgRejectionAndCancellationCleanup().GetAwaiter().GetResult();
+                TestDialogControlsStateAndFourLanguageLocalization();
+                TestSafetyMutationVerification();
+            }
             TestReleaseDiscoverySortingAndOriginValidation();
+            TestEditedReleaseDoesNotHideNewCatalog().GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -1203,18 +1212,15 @@ public static class Program
         Assert(multiV2Tags.SequenceEqual(new[] { "v2-mar", "v2-feb", "v2-jan" }),
             "9.2", "Multiple v2 candidates ordered newest first (mar -> feb -> jan)");
 
-        // 9.3 published / updated 回退逻辑
-        // - 有 published 和 updated 时 published 优先
-        // - 仅有 updated 时回退至 updated
-        // - 两者皆无或无效时排在最后
+        // 9.3 混合时间字段无法形成可靠时间线，保留 Feed 顺序；updated 不是发布时间。
         string fallbackAtom = $@"<feed xmlns=""http://www.w3.org/2005/Atom"">
             <entry><updated>2026-05-01T00:00:00Z</updated><link href=""{repo}/releases/tag/updated-only"" /></entry>
             <entry><published>2026-06-01T00:00:00Z</published><updated>2026-01-01T00:00:00Z</updated><link href=""{repo}/releases/tag/pub-priority"" /></entry>
             <entry><link href=""{repo}/releases/tag/no-date"" /></entry>
         </feed>";
         var fallbackTags = OfficialPluginReleaseDiscovery.ParseAtomReleaseTags(fallbackAtom);
-        Assert(fallbackTags.SequenceEqual(new[] { "pub-priority", "updated-only", "no-date" }),
-            "9.3", "Published takes priority over updated, updated fallback works, nodate sorted last");
+        Assert(fallbackTags.SequenceEqual(new[] { "updated-only", "pub-priority", "no-date" }),
+            "9.3", "Incomplete publication timestamps preserve feed order instead of sorting by edit time");
 
         // 9.4 同时间稳定排序：同一时间戳按 tag Ordinal 升序排列
         string sameDateAtom = $@"<feed xmlns=""http://www.w3.org/2005/Atom"">
@@ -1248,6 +1254,33 @@ public static class Program
         Assert(tenTags.Count == 8, "9.6.1", "Output bounded by MaxCandidates = 8");
         Assert(tenTags[0] == "item-09", "9.6.2", "Item 9 with newest date sorted to first position among top 8");
         Assert(!tenTags.Contains("item-01") && !tenTags.Contains("item-02"), "9.6.3", "Oldest items (item-01, item-02) truncated");
+
+        // 9.11 真实回归：旧 Release 后编辑，updated 较新，但不能抢占新目录。
+        string editedOldAtom = $@"<feed xmlns=""http://www.w3.org/2005/Atom"">
+            <entry><updated>2026-10-11T04:13:48Z</updated><link href=""{repo}/releases/tag/modules-2026.10.11.1"" /></entry>
+            <entry><updated>2026-10-11T04:14:47Z</updated><link href=""{repo}/releases/tag/modules-2026.10.10.1"" /></entry>
+        </feed>";
+        Assert(OfficialPluginReleaseDiscovery.ParseAtomReleaseTags(editedOldAtom)
+            .SequenceEqual(new[] { "modules-2026.10.11.1", "modules-2026.10.10.1" }),
+            "9.11", "Editing an older release cannot move it ahead of the newest feed entry");
+
+        string invalidPublishedAtom = $@"<feed xmlns=""http://www.w3.org/2005/Atom"">
+            <entry><published>invalid</published><updated>2026-01-01T00:00:00Z</updated><link href=""{repo}/releases/tag/new-no-date"" /></entry>
+            <entry><published>2025-01-01T00:00:00Z</published><updated>2099-01-01T00:00:00Z</updated><link href=""{repo}/releases/tag/old-edited"" /></entry>
+        </feed>";
+        Assert(OfficialPluginReleaseDiscovery.ParseAtomReleaseTags(invalidPublishedAtom)
+            .SequenceEqual(new[] { "new-no-date", "old-edited" }),
+            "9.12", "Invalid publication dates preserve feed order even with future edit timestamps");
+
+        var undatedEntries = Enumerable.Range(1, 10).Select(i =>
+            $@"<entry><updated>2026-01-{i:D2}T00:00:00Z</updated><link href=""{repo}/releases/tag/item-{i:D2}"" /></entry>");
+        string undatedAtom = $@"<feed xmlns=""http://www.w3.org/2005/Atom"">
+            <entry><link href=""https://example.com/releases/tag/untrusted"" /></entry>
+            <entry><link href=""{repo}/releases/tag/item-01"" /></entry>
+            {string.Concat(undatedEntries)}</feed>";
+        Assert(OfficialPluginReleaseDiscovery.ParseAtomReleaseTags(undatedAtom)
+            .SequenceEqual(Enumerable.Range(1, 8).Select(i => $"item-{i:D2}")),
+            "9.13", "Undated candidates are origin-checked and deduplicated before the eight-entry limit");
 
         // 9.7 来源校验：TryExtractOfficialReleaseTag
         // 9.7.1 必须是绝对 HTTPS
@@ -1332,6 +1365,63 @@ public static class Program
                 "9.10", $"TryParseUtcDate parses UTC identically under {lang}");
         }
         I18n.SetLanguage("zh-CN");
+    }
+
+    private static async Task TestEditedReleaseDoesNotHideNewCatalog()
+    {
+        const string repo = "https://github.com/Star-Pie/StarPie-Official-Plugins";
+        const string newTag = "modules-2026.10.11.1";
+        const string oldTag = "modules-2026.10.10.1";
+        string feed = $@"<feed xmlns=""http://www.w3.org/2005/Atom"">
+            <entry><updated>2026-10-11T04:13:48Z</updated><link href=""{repo}/releases/tag/{newTag}"" /></entry>
+            <entry><updated>2026-10-11T04:14:47Z</updated><link href=""{repo}/releases/tag/{oldTag}"" /></entry>
+        </feed>";
+        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var newCatalog = JsonSerializer.Deserialize<OfficialPluginCatalog>(CreateValidCatalogJson(newTag), jsonOptions)!;
+        newCatalog.Modules.Add(new OfficialPluginCatalogEntry
+        {
+            Id = "starpie.plugin.desktoppet",
+            Versions = new List<OfficialPluginModule>
+            {
+                new()
+                {
+                    Name = "DesktopPet", Version = "0.1.6", ReleaseTag = newTag,
+                    AssetName = "StarPie.Plugin.DesktopPet-0.1.6.spkg",
+                    PackageUrl = $"{repo}/releases/download/{newTag}/StarPie.Plugin.DesktopPet-0.1.6.spkg",
+                    Sha256 = new string('a', 64), Size = 97450, ApiVersion = "1.11",
+                    TargetFramework = "net8.0-windows", MinHostVersion = "1.8.0-beta.7"
+                }
+            }
+        });
+        string newJson = JsonSerializer.Serialize(newCatalog);
+        var requestedUrls = new List<string>();
+        var handler = new DelegatingMockHttpHandler(request =>
+        {
+            string url = request.RequestUri!.AbsoluteUri;
+            requestedUrls.Add(url);
+            string body = url == repo + "/releases.atom" ? feed
+                : url == $"{repo}/releases/download/{newTag}/module-catalog.json" ? newJson
+                : url == $"{repo}/releases/download/{oldTag}/module-catalog.json" ? CreateValidCatalogJson(oldTag)
+                : throw new InvalidOperationException($"Unexpected discovery request: {url}");
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) };
+        });
+        OfficialPluginClient.HttpHandlerOverrideForTesting = handler;
+        try
+        {
+            var catalog = await OfficialPluginClient.FetchCatalogAsync();
+            Assert(catalog.ReleaseTag == newTag, "9.14.1", "Refresh selects the newest release, not the last edited release");
+            Assert(catalog.Modules.Any(module => module.Id == "starpie.plugin.desktoppet"),
+                "9.14.2", "DesktopPet remains visible in the refreshed catalog");
+            Assert(requestedUrls.SequenceEqual(new[] { repo + "/releases.atom", $"{repo}/releases/download/{newTag}/module-catalog.json" }),
+                "9.14.3", "Refresh requests only the feed and newest catalog, without added API or old-catalog requests");
+            Assert(OfficialPluginClient.TryLoadCachedCatalog(out var cached, out _, out _) && cached.ReleaseTag == newTag,
+                "9.14.4", "The refreshed cache retains the newest catalog");
+        }
+        finally
+        {
+            OfficialPluginClient.HttpHandlerOverrideForTesting = null;
+            handler.Dispose();
+        }
     }
 
     private static string CreateValidCatalogJson(string releaseTag)
