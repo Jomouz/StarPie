@@ -307,6 +307,14 @@ internal sealed class PluginUninstallResult
 {
     public bool Success { get; init; }
     public string Error { get; init; } = "";
+    public bool RestartSuggested { get; init; }
+
+    public static PluginUninstallResult FromStopFailure(PluginStopResult stop) => new()
+    {
+        Success = false,
+        Error = $"插件尚未完全停止，不能删除文件：{stop.Message}",
+        RestartSuggested = stop.RestartSuggested,
+    };
 }
 
 /// <summary>

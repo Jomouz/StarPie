@@ -7368,18 +7368,17 @@ public partial class SettingsWindow : Window
 			_officialCatalogCachedAt = OfficialPluginClient.GetCachedCatalogTimestamp();
 			_officialPluginsError = null;
 			RenderOfficialPluginItems();
-			RenderOfficialPluginsStatus();
 		}
 		catch (Exception ex)
 		{
 			AppLogger.LogWarn($"[plugin] 刷新官方插件目录失败：{ex.Message}");
 			_officialPluginsError = ex.Message;
-			RenderOfficialPluginsStatus();
 		}
 		finally
 		{
 			_officialPluginsLoading = false;
 			if (RefreshOfficialPluginsButton != null) RefreshOfficialPluginsButton.IsEnabled = true;
+			RenderOfficialPluginsStatus();
 		}
 	}
 
@@ -7399,6 +7398,10 @@ public partial class SettingsWindow : Window
 		{
 			OfficialPluginsStatusText.Text = I18n.T("PluginsOfficialLoading");
 		}
+		else if (!string.IsNullOrWhiteSpace(_officialPluginsError))
+		{
+			OfficialPluginsStatusText.Text = I18n.TF("PluginsOfficialUnavailable", _officialPluginsError);
+		}
 		else if (_officialPluginCatalog != null && _officialCatalogCachedAt.HasValue)
 		{
 			string cachedAt = _officialCatalogCachedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
@@ -7407,10 +7410,6 @@ public partial class SettingsWindow : Window
 		else if (_officialPluginCatalog != null)
 		{
 			OfficialPluginsStatusText.Text = I18n.TF("PluginsOfficialCatalogInfo", _officialPluginCatalog.CatalogVersion, _officialPluginCatalog.Modules.Count);
-		}
-		else if (!string.IsNullOrWhiteSpace(_officialPluginsError))
-		{
-			OfficialPluginsStatusText.Text = I18n.TF("PluginsOfficialUnavailable", _officialPluginsError);
 		}
 		else
 		{
@@ -7467,7 +7466,7 @@ public partial class SettingsWindow : Window
 			if (!result.Success)
 			{
 				string detail = I18n.TF("PluginsOfficialInstallFailed", module.Name, result.Error);
-				if (!result.RestartSuggested || !OfferPluginRestart(result.PluginId, detail, restartSuggested: true, retryInstall: true))
+				if (!result.RestartSuggested || !OfferPluginRestart(result.PluginId, detail, restartSuggested: true, operation: PluginRestartOperation.InstallOrUpdate))
 					AppMessageBox.Show(this, detail, title, MessageBoxButton.OK, MessageBoxImage.Warning);
 			}
 			else AppMessageBox.Show(this, I18n.TF("PluginsOfficialInstalled", module.Name, module.Version), title, MessageBoxButton.OK, MessageBoxImage.Information);
@@ -7722,7 +7721,7 @@ public partial class SettingsWindow : Window
 		if (!installResult.Success)
 		{
 			string detail = I18n.TF("PluginsInstallFailed", error);
-			if (!installResult.RestartSuggested || !OfferPluginRestart(installResult.PluginId, detail, restartSuggested: true, retryInstall: true))
+			if (!installResult.RestartSuggested || !OfferPluginRestart(installResult.PluginId, detail, restartSuggested: true, operation: PluginRestartOperation.InstallOrUpdate))
 				AppMessageBox.Show(this, detail, I18n.T("PluginsMsgTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
 		}
 		else if (candidate.State == PluginCandidateState.Update)
@@ -7873,7 +7872,7 @@ public partial class SettingsWindow : Window
 		if (!result.Success)
 		{
 			string detail = I18n.TF("PluginsInstallFailed", result.Error);
-			if (!result.RestartSuggested || !OfferPluginRestart(result.PluginId, detail, restartSuggested: true, retryInstall: true))
+			if (!result.RestartSuggested || !OfferPluginRestart(result.PluginId, detail, restartSuggested: true, operation: PluginRestartOperation.InstallOrUpdate))
 				AppMessageBox.Show(this, detail, I18n.T("PluginsMsgTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
 			if (!App.IsExiting) RefreshPluginManagerUi();
 			return;
@@ -8083,7 +8082,9 @@ public partial class SettingsWindow : Window
 		}
 	}
 
-	private bool OfferPluginRestart(string pluginId, string detail, bool restartSuggested = false, bool retryInstall = false)
+	private enum PluginRestartOperation { Stop, InstallOrUpdate, Uninstall }
+
+	private bool OfferPluginRestart(string pluginId, string detail, bool restartSuggested = false, PluginRestartOperation operation = PluginRestartOperation.Stop)
 	{
 		if (!restartSuggested && !PluginHost.IsRestartRequired(pluginId))
 		{
@@ -8091,16 +8092,22 @@ public partial class SettingsWindow : Window
 		}
 
 		string pluginName = PluginHost.Find(pluginId)?.Entry.Name ?? pluginId;
+		string promptKey = operation switch
+		{
+			PluginRestartOperation.InstallOrUpdate => "PluginsUpdateRestartPrompt",
+			PluginRestartOperation.Uninstall => "PluginsUninstallRestartPrompt",
+			_ => "PluginsRestartPrompt",
+		};
 		MessageBoxResult choice = AppMessageBox.Show(
 			this,
-			I18n.TF(retryInstall ? "PluginsUpdateRestartPrompt" : "PluginsRestartPrompt", pluginName, detail),
+			I18n.TF(promptKey, pluginName, detail),
 			I18n.T("PluginsRestartTitle"),
 			MessageBoxButton.YesNo,
 			MessageBoxImage.Warning,
 			MessageBoxResult.No);
 		if (choice != MessageBoxResult.Yes) return true;
 
-		if (App.Restart()) return true;
+		if (App.Restart(showSettingsWindow: true)) return true;
 
 		AppMessageBox.Show(this, I18n.TF("PluginsRestartFailed", I18n.T("PluginsRestartStartFailed")),
 			I18n.T("PluginsRestartTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
@@ -8149,7 +8156,8 @@ public partial class SettingsWindow : Window
 		try
 		{
 			PluginUninstallResult result = await PluginHost.UninstallAsync(pluginId, removePluginData: true);
-			if (!result.Success)
+			if (!result.Success && !OfferPluginRestart(pluginId, result.Error,
+				restartSuggested: result.RestartSuggested, operation: PluginRestartOperation.Uninstall))
 			{
 				AppMessageBox.Show(this, I18n.TF("PluginsUninstallFailed", result.Error),
 					I18n.T("PluginsMsgTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -8157,8 +8165,11 @@ public partial class SettingsWindow : Window
 		}
 		finally
 		{
-			button.IsEnabled = true;
-			RefreshPluginManagerUi();
+			if (!App.IsExiting)
+			{
+				button.IsEnabled = true;
+				RefreshPluginManagerUi();
+			}
 		}
 	}
 

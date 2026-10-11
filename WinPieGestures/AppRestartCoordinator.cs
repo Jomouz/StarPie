@@ -9,16 +9,16 @@ internal static class AppRestartCoordinator
 {
     internal const string WaitArgument = "--restart-after-exit";
 
-    internal static ProcessStartInfo CreateStartInfo(string executable, int processId, long startTimeUtcTicks)
+    internal static ProcessStartInfo CreateStartInfo(string executable, int processId, long startTimeUtcTicks, bool showSettingsWindow = false)
     {
         var info = new ProcessStartInfo
         {
             FileName = executable,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
+            WindowStyle = showSettingsWindow ? ProcessWindowStyle.Normal : ProcessWindowStyle.Hidden,
         };
-        info.ArgumentList.Add("--silent");
+        if (!showSettingsWindow) info.ArgumentList.Add("--silent");
         info.ArgumentList.Add(WaitArgument);
         info.ArgumentList.Add(processId.ToString(CultureInfo.InvariantCulture));
         info.ArgumentList.Add(startTimeUtcTicks.ToString(CultureInfo.InvariantCulture));
