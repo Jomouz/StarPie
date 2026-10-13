@@ -29,8 +29,12 @@ internal static class DesktopShellToken
     }
 
     // 可替换的只读查询接缝：回归测试不打开真实进程，也不触发启动或提权。
-    internal static bool IsStandardUser(SafeAccessTokenHandle token, TokenInformationQuery query)
+    internal static bool IsStandardUser(SafeAccessTokenHandle token, TokenInformationQuery query) =>
+        TryGetStandardUserStatus(token, query, out bool standardUser) && standardUser;
+
+    internal static bool TryGetStandardUserStatus(SafeAccessTokenHandle token, TokenInformationQuery query, out bool standardUser)
     {
+        standardUser = false;
         IntPtr integrityBuffer = IntPtr.Zero;
         IntPtr elevationBuffer = IntPtr.Zero;
         try
@@ -40,10 +44,12 @@ internal static class DesktopShellToken
             if (sid == IntPtr.Zero) return false;
             byte count = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
             if (count == 0) return false;
-            int integrity = Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(count - 1)));
-            if (integrity >= 0x3000) return false; // HIGH or SYSTEM
+            // 完整性 RID 是 DWORD；无符号比较避免异常高值被误当作低完整性。
+            uint integrity = unchecked((uint)Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(count - 1))));
+            if (integrity >= 0x3000) return true; // 已确认 HIGH/SYSTEM，不是检测失败。
             if (!TryQueryTokenInformation(token, 20, sizeof(int), query, out elevationBuffer)) return false; // TokenElevation
-            return Marshal.ReadInt32(elevationBuffer) == 0;
+            standardUser = Marshal.ReadInt32(elevationBuffer) == 0;
+            return true;
         }
         finally
         {
@@ -52,7 +58,7 @@ internal static class DesktopShellToken
         }
     }
 
-    private static bool TryQueryTokenInformation(SafeAccessTokenHandle token, int informationClass,
+    internal static bool TryQueryTokenInformation(SafeAccessTokenHandle token, int informationClass,
         int minimumLength, TokenInformationQuery query, out IntPtr information)
     {
         information = IntPtr.Zero;

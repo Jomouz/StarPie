@@ -2406,7 +2406,7 @@ public static class ActionExecutor
     }
 
 	/// <summary>
-	/// Issue #58: 当 StarPie 以管理员提权运行时，通过 Windows 资源管理器 (explorer.exe) 桌面 Shell 中转以标准普通用户权限 (Medium Integrity) 启动外部程序。
+	/// 优先通过未提权的桌面 Shell 启动；桌面 Shell 已提权时，由统一令牌启动器尝试同用户／同会话的普通权限后备。
 	/// 解决以普通权限启动失效、终端仍带管理员盾牌、以及因 UIPI 隔离无法拖入外部文件的问题。
 	/// </summary>
 	public static bool TryLaunchUnelevatedViaExplorer(string path, string arguments, string workingDir) =>
@@ -2416,8 +2416,7 @@ public static class ActionExecutor
 	{
         if (!DesktopShellToken.IsStandardUser())
         {
-            AppLogger.LogWarn("Unelevated launch refused: no non-elevated desktop Shell is available.");
-            return false;
+            return StandardUserProcessLauncher.TryStart(path, arguments ?? "", workingDir ?? "", showCommand);
         }
         var comObjects = new System.Collections.Generic.List<object>();
 		try
