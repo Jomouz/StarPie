@@ -31,6 +31,23 @@ public static class ConfigManager
 		Interlocked.Increment(ref _configurationRevision);
 	}
 
+	public static void SetGlobalPrimarySectorFontSize(WheelProfile? profile, double fontSize)
+	{
+		CurrentConfig.SectorFontSize = fontSize;
+		if (profile?.Actions == null)
+		{
+			return;
+		}
+		// 全局字号操作让当前方案的主扇区重新继承；子动作和其他方案的独立定制仍保留。
+		foreach (ActionItem? action in profile.Actions)
+		{
+			if (action != null)
+			{
+				action.CustomFontSize = null;
+			}
+		}
+	}
+
 	// 本次启动是否因配置文件损坏而回落到了默认配置。
 	// 为 true 时必须禁止任何自动写盘，否则会把默认配置覆盖掉用户尚可恢复的损坏文件。
 	public static bool IsFallbackConfig { get; private set; }
@@ -457,53 +474,96 @@ public static class ConfigManager
 					continue;
 				}
 
-				// 检查 BoundProcesses 字段（支持逗号/分号/空格分隔多个进程）
-				if (!string.IsNullOrWhiteSpace(profile.BoundProcesses))
-				{
-					string[] tokens = profile.BoundProcesses.Split(new[] { ',', ';', '|', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-					foreach (string token in tokens)
-					{
-						string target = token.Trim().ToLowerInvariant();
-						string targetBase = target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-							? target.Substring(0, target.Length - 4)
-							: target;
-
-						if (target == cleanProc || targetBase == cleanBase)
-						{
-							return profile;
-						}
-					}
-				}
-
-				// 回退检查 ProcessName 字段
-				string pProc = profile.ProcessName.Trim().ToLowerInvariant();
-				string pBase = pProc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-					? pProc.Substring(0, pProc.Length - 4)
-					: pProc;
-
-				if (pProc == cleanProc || pBase == cleanBase)
+				if (IsProfileBoundToProcess(profile, cleanProc, cleanBase))
 				{
 					return profile;
-				}
-
-				// 检查 DisplayName 字段（若用户将显示名称直接设为了目标程序名或进程名）
-				if (!string.IsNullOrWhiteSpace(profile.DisplayName))
-				{
-					string dProc = profile.DisplayName.Trim().ToLowerInvariant();
-					string dBase = dProc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-						? dProc.Substring(0, dProc.Length - 4)
-						: dProc;
-
-					if (dProc == cleanProc || dBase == cleanBase)
-					{
-						return profile;
-					}
 				}
 			}
 		}
 
 		// 2. 无专属方案匹配时兜底回落至 Global
 		return GetGlobalProfile();
+	}
+
+	/// <summary>
+	/// 判断指定配置方案是否绑定了给定的进程名。
+	/// 若配置显式设置了 BoundProcesses，则严格以 BoundProcesses 为准；
+	/// 若 BoundProcesses 为空（旧配置兼容），则回退匹配 ProcessName 与 DisplayName。
+	/// </summary>
+	public static bool IsProfileBoundToProcess(WheelProfile? profile, string? processName)
+	{
+		if (profile == null || string.IsNullOrWhiteSpace(processName))
+		{
+			return false;
+		}
+
+		if (string.Equals(profile.ProcessName, "Global", StringComparison.OrdinalIgnoreCase))
+		{
+			return false;
+		}
+
+		string cleanProc = processName.Trim().ToLowerInvariant();
+		string cleanBase = cleanProc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+			? cleanProc.Substring(0, cleanProc.Length - 4)
+			: cleanProc;
+
+		return IsProfileBoundToProcess(profile, cleanProc, cleanBase);
+	}
+
+	internal static bool IsProfileBoundToProcess(WheelProfile profile, string cleanProc, string cleanBase)
+	{
+		if (profile == null) return false;
+		if (string.Equals(profile.ProcessName, "Global", StringComparison.OrdinalIgnoreCase)) return false;
+
+		// 检查 BoundProcesses 字段（支持逗号/分号/竖线/空格/中文逗号分隔多个进程）
+		if (!string.IsNullOrWhiteSpace(profile.BoundProcesses))
+		{
+			string[] tokens = profile.BoundProcesses.Split(new[] { ',', ';', '|', ' ', '，' }, StringSplitOptions.RemoveEmptyEntries);
+			foreach (string token in tokens)
+			{
+				string target = token.Trim().ToLowerInvariant();
+				string targetBase = target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+					? target.Substring(0, target.Length - 4)
+					: target;
+
+				if (target == cleanProc || targetBase == cleanBase)
+				{
+					return true;
+				}
+			}
+			// 当用户显式配置了 BoundProcesses 时，绑定关系以 BoundProcesses 为准，不再回退 ProcessName/DisplayName
+			return false;
+		}
+
+		// 旧配置未填写 BoundProcesses 时的兼容行为：回退检查 ProcessName
+		if (!string.IsNullOrWhiteSpace(profile.ProcessName))
+		{
+			string pProc = profile.ProcessName.Trim().ToLowerInvariant();
+			string pBase = pProc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+				? pProc.Substring(0, pProc.Length - 4)
+				: pProc;
+
+			if (pProc == cleanProc || pBase == cleanBase)
+			{
+				return true;
+			}
+		}
+
+		// 检查 DisplayName 字段（若用户在旧版本将显示名称直接设为了目标程序名或进程名）
+		if (!string.IsNullOrWhiteSpace(profile.DisplayName))
+		{
+			string dProc = profile.DisplayName.Trim().ToLowerInvariant();
+			string dBase = dProc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+				? dProc.Substring(0, dProc.Length - 4)
+				: dProc;
+
+			if (dProc == cleanProc || dBase == cleanBase)
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	public static WheelProfile GetGlobalProfile()

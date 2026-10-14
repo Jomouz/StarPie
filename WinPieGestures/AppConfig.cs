@@ -105,6 +105,9 @@ public class AppConfig
 	/// <summary>当启用外圈子环二级菜单时，呼出轮盘是否直接同时展开所有一二级轮盘（无需划出触发距离）。</summary>
 	public bool AutoExpandSubRingsOnPopup { get; set; } = false;
 
+	/// <summary>划入二级子菜单后是否锁定父级扇区（防止在二级菜单区域移动时光标跨越一级极角边界意外切换父扇区，默认 false）。</summary>
+	public bool LockParentSectorOnSubmenu { get; set; } = false;
+
 	/// <summary>在设置控制台拖拽对调一级扇区时，是否连同其绑定的二级级联子动作一块换位（默认 true）。</summary>
 	public bool LinkSubActionsWhenDragging { get; set; } = true;
 

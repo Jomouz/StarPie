@@ -26,6 +26,8 @@
 
 ## 导入、导出与即时刷新
 
+- `LockParentSectorOnSubmenu` 为可选布尔字段，缺失时按 `false` 保持原交互；显式 `false` 和 `true` 均须往返保留。父扇区锁定状态只属于当前手势，不持久化。
+
 - `ConfigManager.ExportConfig` 必须包含 `CustomColorPresets`、主题、色彩微调和几何尺寸等全局状态。
 - 导入成功后刷新主题预设、动作槽位和实时画布；防止 `_isUpdatingUi` 留在错误状态。
 - 不要手工构造最小 JSON 当真实首装配置。`EnsureConfigHealth` 负责校验，不保证补全默认轮盘。
