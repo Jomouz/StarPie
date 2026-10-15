@@ -1948,55 +1948,8 @@ public partial class RadialWindow : Window
 			TextBlock? textElement = null;
 			if (shouldShowText && !string.IsNullOrEmpty(text2))
 			{
-				double baseFontSize = (currentAction != null && currentAction.CustomFontSize.HasValue && currentAction.CustomFontSize.Value > 0.0)
-					? currentAction.CustomFontSize.Value
-					: ((ConfigManager.CurrentConfig.SectorFontSize > 0.0) ? ConfigManager.CurrentConfig.SectorFontSize : 11.0);
-				double num13 = ((sectorLayout == "TextOnly") ? (baseFontSize + 1.0) : baseFontSize);
-				switch (sectorCount)
-				{
-				case 12:
-					num13 = Math.Min(num13, 10.0);
-					break;
-				case 4:
-					num13 = Math.Max(num13, 12.0);
-					break;
-				}
-
-				// 扇区过长文字自适应智能两行排版 (Smart Two-Line Formatting)
 				string formattedSectorText = SectorTextFormatter.FormatSectorText(text2, sectorCount);
-				string[] sectorLines = formattedSectorText.Split('\n');
-				double maxLineWeight = sectorLines.Max(l => SectorTextFormatter.MeasureVisualWeight(l));
-				int maxLineLen = sectorLines.Max(l => l.Length);
-				bool isPureAscii = formattedSectorText.All(c => c < 128);
-				if (sectorCount == 12)
-				{
-					if (maxLineWeight > 8.0 || (isPureAscii && maxLineLen > 7))
-					{
-						num13 = Math.Max(7.5, num13 * 0.82);
-					}
-					else if (maxLineWeight > 5.0)
-					{
-						num13 = Math.Max(8.2, num13 * 0.90);
-					}
-				}
-				else if (sectorCount == 8)
-				{
-					if (maxLineWeight > 12.0 || (isPureAscii && maxLineLen > 10))
-					{
-						num13 = Math.Max(8.5, num13 * 0.85);
-					}
-					else if (maxLineWeight > 8.0)
-					{
-						num13 = Math.Max(9.2, num13 * 0.92);
-					}
-				}
-				else // 4 键
-				{
-					if (maxLineWeight > 16.0)
-					{
-						num13 = Math.Max(10.0, num13 * 0.88);
-					}
-				}
+				double num13 = CalculatePrimarySectorFontSize(sectorCount, sectorLayout, currentAction, text2);
 
 				double maxWidth = sectorCount switch
 				{
@@ -3687,6 +3640,73 @@ public partial class RadialWindow : Window
 			scaleTransform2.BeginAnimation(ScaleTransform.ScaleYProperty, doubleAnimation2);
 		}
 		_subTierCache[parentIndex] = SnapshotSubTierVisuals(snapshotStart);
+	}
+
+	/// <summary>
+	/// 一级主轮盘扇区文字字号计算核心算法。
+	/// 针对 12 键 TextOnly 布局按 0.8 比例自适应缩放（与设置预览严格保持一致），
+	/// 并尊重全局 SectorFontSize 与单扇区 CustomFontSize 配置。
+	/// </summary>
+	public static double CalculatePrimarySectorFontSize(int sectorCount, string sectorLayout, ActionItem? currentAction, string text)
+	{
+		double baseFontSize = (currentAction != null && currentAction.CustomFontSize.HasValue && currentAction.CustomFontSize.Value > 0.0)
+			? currentAction.CustomFontSize.Value
+			: ((ConfigManager.CurrentConfig.SectorFontSize > 0.0) ? ConfigManager.CurrentConfig.SectorFontSize : 11.0);
+		double fontSize = ((sectorLayout == "TextOnly") ? (baseFontSize + 1.0) : baseFontSize);
+		switch (sectorCount)
+		{
+		case 12:
+			if (sectorLayout == "TextOnly")
+			{
+				fontSize *= 0.8;
+			}
+			else
+			{
+				fontSize = Math.Min(fontSize, 10.0);
+			}
+			break;
+		case 4:
+			fontSize = Math.Max(fontSize, 12.0);
+			break;
+		}
+
+		// 扇区过长文字自适应智能两行排版 (Smart Two-Line Formatting)
+		string formattedSectorText = SectorTextFormatter.FormatSectorText(text, sectorCount);
+		string[] sectorLines = formattedSectorText.Split('\n');
+		double maxLineWeight = sectorLines.Max(l => SectorTextFormatter.MeasureVisualWeight(l));
+		int maxLineLen = sectorLines.Max(l => l.Length);
+		bool isPureAscii = formattedSectorText.All(c => c < 128);
+		if (sectorCount == 12)
+		{
+			if (maxLineWeight > 8.0 || (isPureAscii && maxLineLen > 7))
+			{
+				fontSize = Math.Max(7.5, fontSize * 0.82);
+			}
+			else if (maxLineWeight > 5.0)
+			{
+				fontSize = Math.Max(8.2, fontSize * 0.90);
+			}
+		}
+		else if (sectorCount == 8)
+		{
+			if (maxLineWeight > 12.0 || (isPureAscii && maxLineLen > 10))
+			{
+				fontSize = Math.Max(8.5, fontSize * 0.85);
+			}
+			else if (maxLineWeight > 8.0)
+			{
+				fontSize = Math.Max(9.2, fontSize * 0.92);
+			}
+		}
+		else // 4 键
+		{
+			if (maxLineWeight > 16.0)
+			{
+				fontSize = Math.Max(10.0, fontSize * 0.88);
+			}
+		}
+
+		return fontSize;
 	}
 
 }

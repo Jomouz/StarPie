@@ -110,6 +110,8 @@ public partial class SettingsWindow : Window
 	private bool _isUpdatingUi = false;
 
 	private bool _isRenderingPreview;
+	private readonly SubmenuLockTracker _previewSubmenuLock = new();
+	private double _liveWheelPreviewScale = 1.0;
 
 	private readonly List<System.Windows.Shapes.Path> _previewSectorPaths = new List<System.Windows.Shapes.Path>();
 
@@ -1226,6 +1228,14 @@ public partial class SettingsWindow : Window
 			bool isFanSub = string.Equals(ConfigManager.CurrentConfig.SubmenuStyle, "Fan", StringComparison.OrdinalIgnoreCase);
 			AutoExpandSubRingsPanel.Visibility = (ConfigManager.CurrentConfig.EnableMultiTier && !isFanSub) ? Visibility.Visible : Visibility.Collapsed;
 		}
+		if (LockParentSectorOnSubmenuCheckBox != null)
+		{
+			LockParentSectorOnSubmenuCheckBox.IsChecked = ConfigManager.CurrentConfig.LockParentSectorOnSubmenu;
+		}
+		if (LockParentSectorOnSubmenuPanel != null)
+		{
+			LockParentSectorOnSubmenuPanel.Visibility = ConfigManager.CurrentConfig.EnableMultiTier ? Visibility.Visible : Visibility.Collapsed;
+		}
 		ApplySettingsUiScale(ConfigManager.CurrentConfig.SettingsUiScale);
 		if (UiScaleSlider != null)
 		{
@@ -2236,6 +2246,8 @@ public partial class SettingsWindow : Window
 		if (SubmenuStyleDescTextBlock != null) SubmenuStyleDescTextBlock.Text = I18n.T("SubmenuStyleDesc");
 		if (AutoExpandSubRingsCheckBox != null) AutoExpandSubRingsCheckBox.Content = I18n.T("AutoExpandSubRingsTitle");
 		if (AutoExpandSubRingsDescText != null) AutoExpandSubRingsDescText.Text = I18n.T("AutoExpandSubRingsDesc");
+		if (LockParentSectorOnSubmenuCheckBox != null) LockParentSectorOnSubmenuCheckBox.Content = I18n.T("LockParentSectorOnSubmenuTitle");
+		if (LockParentSectorOnSubmenuDescText != null) LockParentSectorOnSubmenuDescText.Text = I18n.T("LockParentSectorOnSubmenuDesc");
 
 		// Layer Indicator
 		if (LayerIndicatorSectionTitle != null) LayerIndicatorSectionTitle.Text = I18n.T("LayerIndicatorSectionTitle");
@@ -4707,9 +4719,7 @@ public partial class SettingsWindow : Window
 		string appName = !string.IsNullOrWhiteSpace(programPickerWindow.SelectedName) 
 			? programPickerWindow.SelectedName 
 			: System.IO.Path.GetFileNameWithoutExtension(procName);
-		if (ConfigManager.CurrentConfig.Profiles.Any((WheelProfile p) => 
-			p.ProcessName.Equals(procName, StringComparison.OrdinalIgnoreCase) ||
-			(!string.IsNullOrEmpty(p.BoundProcesses) && p.BoundProcesses.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries).Any(x => x.Trim().Equals(procName, StringComparison.OrdinalIgnoreCase)))))
+		if (ConfigManager.CurrentConfig.Profiles.Any((WheelProfile p) => ConfigManager.IsProfileBoundToProcess(p, procName)))
 		{
 			AppMessageBox.Show(this, $"已存在针对「{procName}」的配置方案！", "提示", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 			return;
@@ -4755,9 +4765,7 @@ public partial class SettingsWindow : Window
 				return;
 			}
 			string procName = picker.SelectedProcessName.ToLowerInvariant();
-			if (ConfigManager.CurrentConfig.Profiles.Any((WheelProfile p) => 
-				p.ProcessName.Equals(procName, StringComparison.OrdinalIgnoreCase) ||
-				(!string.IsNullOrEmpty(p.BoundProcesses) && p.BoundProcesses.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries).Any(x => x.Trim().Equals(procName, StringComparison.OrdinalIgnoreCase)))))
+			if (ConfigManager.CurrentConfig.Profiles.Any((WheelProfile p) => ConfigManager.IsProfileBoundToProcess(p, procName)))
 			{
 				AppMessageBox.Show(this, $"已存在针对「{procName}」的配置方案！", "提示", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 				return;
@@ -4810,9 +4818,7 @@ public partial class SettingsWindow : Window
 				return;
 			}
 			string procName = System.IO.Path.GetFileName(dlg.FileName).ToLowerInvariant();
-			if (ConfigManager.CurrentConfig.Profiles.Any((WheelProfile p) => 
-				p.ProcessName.Equals(procName, StringComparison.OrdinalIgnoreCase) ||
-				(!string.IsNullOrEmpty(p.BoundProcesses) && p.BoundProcesses.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries).Any(x => x.Trim().Equals(procName, StringComparison.OrdinalIgnoreCase)))))
+			if (ConfigManager.CurrentConfig.Profiles.Any((WheelProfile p) => ConfigManager.IsProfileBoundToProcess(p, procName)))
 			{
 				AppMessageBox.Show(this, $"已存在针对「{procName}」的配置方案！", "提示", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 				return;
@@ -13543,7 +13549,12 @@ public partial class SettingsWindow : Window
 		{
 			double val = e.NewValue;
 			SectorFontSizeLabel.Text = $"{val:0.0} px";
-			if (_selectedMultiSlots.Count > 1)
+			if (_selectedLayoutSlotIndex < 0)
+			{
+				WheelProfile? profile = _selectedProfile ?? ConfigManager.CurrentConfig.Profiles?.FirstOrDefault();
+				ConfigManager.SetGlobalPrimarySectorFontSize(profile, val);
+			}
+			else if (_selectedMultiSlots.Count > 1)
 			{
 				WheelProfile? profile = _selectedProfile ?? ConfigManager.CurrentConfig.Profiles?.FirstOrDefault();
 				if (profile?.Actions != null)
@@ -13557,10 +13568,6 @@ public partial class SettingsWindow : Window
 						}
 					}
 				}
-			}
-			else if (_selectedLayoutSlotIndex < 0)
-			{
-				ConfigManager.CurrentConfig.SectorFontSize = val;
 			}
 			else
 			{
@@ -15070,6 +15077,10 @@ public partial class SettingsWindow : Window
 			{
 				AutoExpandSubRingsPanel.Visibility = (ConfigManager.CurrentConfig.EnableMultiTier && !isFan) ? Visibility.Visible : Visibility.Collapsed;
 			}
+			if (LockParentSectorOnSubmenuPanel != null)
+			{
+				LockParentSectorOnSubmenuPanel.Visibility = ConfigManager.CurrentConfig.EnableMultiTier ? Visibility.Visible : Visibility.Collapsed;
+			}
 			ConfigManager.SaveConfig();
 			Grid appearanceSettingsGrid = AppearanceSettingsGrid;
 			if (appearanceSettingsGrid != null && appearanceSettingsGrid.Visibility == Visibility.Visible)
@@ -15084,6 +15095,20 @@ public partial class SettingsWindow : Window
 		if (!_isUpdatingUi && ConfigManager.CurrentConfig != null && AutoExpandSubRingsCheckBox != null)
 		{
 			ConfigManager.CurrentConfig.AutoExpandSubRingsOnPopup = AutoExpandSubRingsCheckBox.IsChecked == true;
+			ConfigManager.SaveConfig();
+			Grid appearanceSettingsGrid = AppearanceSettingsGrid;
+			if (appearanceSettingsGrid != null && appearanceSettingsGrid.Visibility == Visibility.Visible)
+			{
+				RenderLiveWheelPreview();
+			}
+		}
+	}
+
+	private void LockParentSectorOnSubmenuCheckBox_Changed(object sender, RoutedEventArgs e)
+	{
+		if (!_isUpdatingUi && ConfigManager.CurrentConfig != null && LockParentSectorOnSubmenuCheckBox != null)
+		{
+			ConfigManager.CurrentConfig.LockParentSectorOnSubmenu = LockParentSectorOnSubmenuCheckBox.IsChecked == true;
 			ConfigManager.SaveConfig();
 			Grid appearanceSettingsGrid = AppearanceSettingsGrid;
 			if (appearanceSettingsGrid != null && appearanceSettingsGrid.Visibility == Visibility.Visible)
@@ -17147,6 +17172,7 @@ public partial class SettingsWindow : Window
 			return;
 		}
 		_isRenderingPreview = true;
+		_previewSubmenuLock.Reset();
 		try
 		{
 			LiveWheelPreviewCanvas.Children.Clear();
@@ -17183,6 +17209,7 @@ public partial class SettingsWindow : Window
 			double num6 = ((ConfigManager.CurrentConfig.SubWheelOuterRadius > 0.0) ? ConfigManager.CurrentConfig.SubWheelOuterRadius : (ConfigManager.CurrentConfig.WheelRadius * num3));
 			double baseScaleRef = Math.Max(215.0, ConfigManager.CurrentConfig.WheelRadius * 1.55);
 			double num7 = 135.0 / baseScaleRef;
+			_liveWheelPreviewScale = num7;
 			double num8 = Math.Max(30.0, ConfigManager.CurrentConfig.WheelRadius * num7);
 			double num9 = Math.Max(15.0, ConfigManager.CurrentConfig.InnerRadius * num7);
 			double num10 = Math.Max(10.0, ConfigManager.CurrentConfig.CoreRadius * num7);
@@ -18095,50 +18122,8 @@ public partial class SettingsWindow : Window
 				TextBlock? textElement = null;
 				if (shouldShowText && !string.IsNullOrEmpty(text8))
 				{
-					double baseFontSize = (action != null && action.CustomFontSize.HasValue && action.CustomFontSize.Value > 0.0)
-						? action.CustomFontSize.Value
-						: ((ConfigManager.CurrentConfig.SectorFontSize > 0.0) ? ConfigManager.CurrentConfig.SectorFontSize : 11.0);
-					double num32 = num19 switch
-					{
-						4 => 1.2, 
-						12 => 0.8, 
-						_ => 1.0, 
-					};
-					double val2 = ((sectorLayout == "TextOnly") ? (baseFontSize + 1.2) : baseFontSize) * 0.82 * num32 * (num7 / (135.0 / num5));
 					string previewText = SectorTextFormatter.FormatSectorText(text8, num19);
-					string[] previewLines = previewText.Split('\n');
-					double previewMaxWeight = previewLines.Max(l => SectorTextFormatter.MeasureVisualWeight(l));
-					int previewMaxLen = previewLines.Max(l => l.Length);
-					bool previewIsPureAscii = previewText.All(c => c < 128);
-					if (num19 == 12)
-					{
-						if (previewMaxWeight > 8.0 || (previewIsPureAscii && previewMaxLen > 7))
-						{
-							val2 = Math.Max(5.5, val2 * 0.82);
-						}
-						else if (previewMaxWeight > 5.0)
-						{
-							val2 = Math.Max(6.0, val2 * 0.90);
-						}
-					}
-					else if (num19 == 8)
-					{
-						if (previewMaxWeight > 12.0 || (previewIsPureAscii && previewMaxLen > 10))
-						{
-							val2 = Math.Max(6.2, val2 * 0.85);
-						}
-						else if (previewMaxWeight > 8.0)
-						{
-							val2 = Math.Max(6.8, val2 * 0.92);
-						}
-					}
-					else
-					{
-						if (previewMaxWeight > 16.0)
-						{
-							val2 = Math.Max(7.5, val2 * 0.88);
-						}
-					}
+					double val2 = RadialWindow.CalculatePrimarySectorFontSize(num19, sectorLayout, action, text8) * 0.82 * (num7 / (135.0 / num5));
 
 					double maxWidth = num19 switch
 					{
@@ -18254,10 +18239,10 @@ public partial class SettingsWindow : Window
 					targetSelectedParent = 0;
 				}
 
-				ActionItem actionItem = wheelProfile.Actions[num21];
+				ActionItem? actionItem = ConfigManager.CurrentConfig.LockParentSectorOnSubmenu ? action : wheelProfile.Actions[num21];
 
 				List<ActionItem>? subActionsList = null;
-				if (actionItem.SubActions != null && actionItem.SubActions.Count > 0)
+				if (actionItem?.SubActions != null && actionItem.SubActions.Count > 0)
 				{
 					subActionsList = actionItem.SubActions;
 				}
@@ -18286,7 +18271,7 @@ public partial class SettingsWindow : Window
 				{
 					// 蜂窝扇形态保持现状：仅在切换至二级配置时展开，且仅展开当前选中的单个扇区以消除重叠遮挡
 					bool isTier2Mode = (Tier2ConfigSegmentRadio != null && Tier2ConfigSegmentRadio.IsChecked == true);
-					if (!isTier2Mode || num21 != targetSelectedParent)
+					if (!ConfigManager.CurrentConfig.LockParentSectorOnSubmenu && (!isTier2Mode || num21 != targetSelectedParent))
 					{
 						continue;
 					}
@@ -18349,6 +18334,9 @@ public partial class SettingsWindow : Window
 					};
 					int clickedParentIdx = num21;
 					int clickedSubIdx = num36;
+					bool hideUnselectedFan = isFan && ConfigManager.CurrentConfig.LockParentSectorOnSubmenu &&
+						!(Tier2ConfigSegmentRadio?.IsChecked == true && num21 == targetSelectedParent);
+					if (hideUnselectedFan) { path2.Opacity = 0; path2.IsHitTestVisible = false; }
 					path2.MouseLeftButtonDown += (s, e) =>
 					{
 						e.Handled = true;
@@ -18556,7 +18544,7 @@ public partial class SettingsWindow : Window
 						Height = num46,
 						IsHitTestVisible = false,
 						RenderTransform = translateTransform2,
-						Opacity = 1.0
+						Opacity = hideUnselectedFan ? 0 : 1.0
 					};
 					grid3.Children.Add(stackPanel2);
                     foreach (FrameworkElement content in stackPanel2.Children) ArtStyles.ArtStyleRenderer.RememberContent(content, subSectorPreviewTextBrush, !string.IsNullOrWhiteSpace(actionItem2?.CustomTextColor));
@@ -18687,30 +18675,29 @@ public partial class SettingsWindow : Window
 
 	private void LiveWheelPreviewCanvas_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
 	{
+		UpdateLiveWheelPreviewHover(e.GetPosition(LiveWheelPreviewCanvas));
+	}
+
+	internal void UpdateLiveWheelPreviewHover(Point position)
+	{
 		if (_previewSectorPaths.Count == 0 || ConfigManager.CurrentConfig == null)
 		{
 			return;
 		}
 		try
 		{
-			Point position = e.GetPosition(LiveWheelPreviewCanvas);
 			double num = position.X - 150.0;
 			double num2 = position.Y - 150.0;
 			double num3 = Math.Sqrt(num * num + num2 * num2);
 			bool enableMultiTier = ConfigManager.CurrentConfig.EnableMultiTier;
-			double num4 = ((ConfigManager.CurrentConfig.SubWheelRadiusRatio > 1.1) ? ConfigManager.CurrentConfig.SubWheelRadiusRatio : 1.45);
 			WheelProfile wheelProfile = _selectedProfile ?? ConfigManager.CurrentConfig.Profiles.FirstOrDefault();
-			bool num5 = enableMultiTier && wheelProfile?.Actions != null && wheelProfile.Actions.Any((ActionItem a) => a != null && a.SubActions != null && a.SubActions.Count > 0);
-			double num6 = Math.Max(80.0, ConfigManager.CurrentConfig.WheelRadius);
-			double num7 = ((ConfigManager.CurrentConfig.SubWheelOuterRadius > 0.0) ? ConfigManager.CurrentConfig.SubWheelOuterRadius : (ConfigManager.CurrentConfig.WheelRadius * num4));
-			double val = (num5 ? (Math.Max(num6, num7) + 10.0) : num6);
-			double num8 = 135.0 / Math.Max(135.0, val);
-			double num9 = ConfigManager.CurrentConfig.WheelRadius * num8;
-			double num10 = ConfigManager.CurrentConfig.InnerRadius * num8;
-			double num11 = ConfigManager.CurrentConfig.CoreRadius * num8;
-			double num12 = Math.Max(0.0, ((ConfigManager.CurrentConfig.SubWheelInnerGap >= 0.0) ? ConfigManager.CurrentConfig.SubWheelInnerGap : 7.0) * num8);
-			double num13 = num9 + num12 + 2.0;
-			double num14 = Math.Max(num13 + 10.0, num7 * num8);
+			double previewScale = _liveWheelPreviewScale;
+			double num9 = Math.Max(30.0, ConfigManager.CurrentConfig.WheelRadius * previewScale);
+			double num10 = Math.Max(15.0, ConfigManager.CurrentConfig.InnerRadius * previewScale);
+			double num11 = Math.Max(10.0, ConfigManager.CurrentConfig.CoreRadius * previewScale);
+			if (num10 >= num9) num10 = num9 * 0.5;
+			if (num11 >= num10) num11 = num10 * 0.8;
+			double wheelDistance = num3 / previewScale;
 			int num15 = -2;
 			int num16 = -1;
 			bool isFan = string.Equals(ConfigManager.CurrentConfig.SubmenuStyle, "Fan", StringComparison.OrdinalIgnoreCase);
@@ -18718,15 +18705,48 @@ public partial class SettingsWindow : Window
 
 			if (num3 <= num11)
 			{
+				_previewSubmenuLock.Reset();
 				num15 = -1;
 			}
 			else if (num3 >= num10 * 0.75)
 			{
 				double num17 = (Math.Atan2(num2, num) * (180.0 / Math.PI) + 360.0) % 360.0;
 				double num18 = 360.0 / (double)_previewSectorPaths.Count;
-				num15 = (int)Math.Floor((num17 + num18 / 2.0) / num18) % _previewSectorPaths.Count;
+				int rawSector = (int)Math.Floor((num17 + num18 / 2.0) / num18) % _previewSectorPaths.Count;
 
-				if (enableMultiTier && num15 >= 0)
+				bool lockEnabled = ConfigManager.CurrentConfig.LockParentSectorOnSubmenu;
+				if (lockEnabled)
+				{
+					num15 = _previewSubmenuLock.ResolveParentSector(
+						lockEnabled,
+						enableMultiTier,
+						isFan,
+						wheelDistance,
+						rawSector,
+						ConfigManager.CurrentConfig.WheelRadius,
+						ConfigManager.CurrentConfig);
+				}
+				else
+				{
+					_previewSubmenuLock.Reset();
+					num15 = rawSector;
+				}
+				if (lockEnabled && isFan && !_previewSubmenuLock.IsLocked && _lastHoveredSector >= 0)
+				{
+					// 几何命中仍按当前可见父扇区查找，允许从展开间隙直接进入侧翼。
+					for (int index = 0; index < _previewSubSectorPaths.Count; index++)
+					{
+						if (_previewSubParentIndices[index] == _lastHoveredSector &&
+							_previewSubSectorPaths[index].Data?.FillContains(position) == true)
+						{
+							num15 = _lastHoveredSector;
+							break;
+						}
+					}
+				}
+
+				double entryDistance = SubmenuLockTracker.GetSubmenuEntryDistance(ConfigManager.CurrentConfig, isFan, ConfigManager.CurrentConfig.WheelRadius);
+				if (enableMultiTier && num15 >= 0 && (!lockEnabled || _previewSubmenuLock.IsLocked || wheelDistance >= entryDistance))
 				{
 					for (int num22 = 0; num22 < _previewSubSectorPaths.Count; num22++)
 					{
@@ -18735,7 +18755,9 @@ public partial class SettingsWindow : Window
 							System.Windows.Shapes.Path path = _previewSubSectorPaths[num22];
 							if (path.Data != null && path.Data.FillContains(position))
 							{
+								if (lockEnabled && !WheelProfile.IsActionConfigured(wheelProfile?.GetEffectiveAction(num15, _previewSubIndices[num22]))) continue;
 								num16 = num22;
+								if (lockEnabled) _previewSubmenuLock.Lock(num15);
 								break;
 							}
 						}
@@ -18798,6 +18820,7 @@ public partial class SettingsWindow : Window
 
 				if (num25 == num16)
 				{
+					path3.IsHitTestVisible = true;
 					path3.Fill = _previewSubHighlightBrush ?? _previewHighlightBrush;
 					path3.Stroke = _previewSubHighlightBorderBrush ?? _previewHighlightBorderBrush;
 					path3.StrokeThickness = (_previewSubStyleRenderer?.HighlightBorderThickness ?? _previewStyleRenderer?.HighlightBorderThickness ?? 2.0);
@@ -18832,6 +18855,7 @@ public partial class SettingsWindow : Window
 
 				if (num26 == num15)
 				{
+					path3.IsHitTestVisible = true;
 					path3.Fill = _previewSubDefaultBrush ?? _previewDefaultBrush;
 					path3.Stroke = _previewSubHighlightBorderBrush ?? _previewHighlightBorderBrush;
 					path3.StrokeThickness = (_previewSubStyleRenderer?.BorderThickness ?? _previewStyleRenderer?.BorderThickness ?? 1.5);
@@ -18868,8 +18892,11 @@ public partial class SettingsWindow : Window
 				path3.Stroke = _previewSubBorderBrush ?? _previewBorderBrush;
 				path3.StrokeThickness = (_previewSubStyleRenderer?.BorderThickness ?? _previewStyleRenderer?.BorderThickness ?? 1.2);
 				_previewSubStyleRenderer?.ApplySectorHighlight(path3, isHighlighted: false);
-				path3.Opacity = (isFan ? (isTier2Mode ? 0.95 : 0.0) : 0.85);
-				if (grid != null) grid.Opacity = (isFan ? (isTier2Mode ? 1.0 : 0.0) : 0.85);
+				bool showEditedFan = isTier2Mode && (!ConfigManager.CurrentConfig.LockParentSectorOnSubmenu ||
+					num26 == (_selectedLayoutSlotIndex >= 0 ? _selectedLayoutSlotIndex : _selectedSlotIndex));
+				path3.Opacity = (isFan ? (showEditedFan ? 0.95 : 0.0) : 0.85);
+				path3.IsHitTestVisible = path3.Opacity > 0;
+				if (grid != null) grid.Opacity = (isFan ? (showEditedFan ? 1.0 : 0.0) : 0.85);
 				System.Windows.Controls.Panel.SetZIndex(path3, 15);
 				translateTransform2.X = 0.0;
 				translateTransform2.Y = 0.0;
@@ -18905,6 +18932,7 @@ public partial class SettingsWindow : Window
 	{
 		try
 		{
+			_previewSubmenuLock.Reset();
 			_lastHoveredSector = -2;
 			_lastHoveredSubIndex = -2;
 			UpdatePreviewCoreSelection(-1, -1, _selectedProfile ?? ConfigManager.CurrentConfig?.Profiles.FirstOrDefault());
@@ -18930,10 +18958,13 @@ public partial class SettingsWindow : Window
 				path4.StrokeThickness = (_previewSubStyleRenderer?.BorderThickness ?? _previewStyleRenderer?.BorderThickness ?? 1.2);
 				_previewSubStyleRenderer?.ApplySectorHighlight(path4, isHighlighted: false);
 				ApplySubSectorGlow(path4, isHighlighted: false);
-				path4.Opacity = (isFan ? (isTier2Mode ? 0.95 : 0.0) : 0.85);
+				bool showEditedFan = isTier2Mode && (ConfigManager.CurrentConfig?.LockParentSectorOnSubmenu != true ||
+					_previewSubParentIndices[num28] == (_selectedLayoutSlotIndex >= 0 ? _selectedLayoutSlotIndex : _selectedSlotIndex));
+				path4.Opacity = (isFan ? (showEditedFan ? 0.95 : 0.0) : 0.85);
+				path4.IsHitTestVisible = path4.Opacity > 0;
 				if (num28 < _previewSubContainers.Count && _previewSubContainers[num28] != null)
 				{
-					_previewSubContainers[num28].Opacity = (isFan ? (isTier2Mode ? 1.0 : 0.0) : 0.85);
+					_previewSubContainers[num28].Opacity = (isFan ? (showEditedFan ? 1.0 : 0.0) : 0.85);
 				}
 			}
 			ApplyPreviewSelectedVisuals();

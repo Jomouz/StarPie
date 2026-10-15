@@ -49,6 +49,9 @@ public class GestureController : IDisposable
 
 	private volatile bool _disposed;
 
+	private readonly SubmenuLockTracker _submenuLock = new();
+	private bool _suppressPrimaryOnRelease;
+
 	private WheelFocusSession? _currentWheelFocusSession;
 
 	private WheelFocusSession? _pendingExecutionSession;
@@ -304,6 +307,8 @@ public class GestureController : IDisposable
 			_selectedSubSectorIndex = -1;
 			_lastEscapedState = false;
 			_lastShowSubTier = false;
+			_submenuLock.Reset();
+			_suppressPrimaryOnRelease = false;
 			_volumeAdjustActive = false;
 			_volumeGestureTookOver = false;
 			_volumeBaseline = -1f;
@@ -355,6 +360,8 @@ public class GestureController : IDisposable
 		InvalidatePendingExecutionSession();
 		lock (_uiUpdateSync)
 		{
+			_submenuLock.Reset();
+			_suppressPrimaryOnRelease = false;
 			_interactionSession?.Cancel(reason);
 			_interactionSession?.End(reason);
 			_interactionSession = null;
@@ -366,12 +373,15 @@ public class GestureController : IDisposable
 		ActionExecutor.ReleaseStuckModifiers();
 	}
 
-	private (int Sector, int SubSector, WheelProfile? Profile, RadialWindow? Window, bool IsEscaped, long PresentationVersion, PluginInteractionSession? Interaction) EndActiveGesture()
+	private (int Sector, int SubSector, WheelProfile? Profile, RadialWindow? Window, bool IsEscaped, long PresentationVersion, PluginInteractionSession? Interaction, bool IsSubmenuLocked) EndActiveGesture()
 	{
 		lock (_uiUpdateSync)
 		{
 			long presentationVersion = _gestureVersion;
-			var result = (_selectedSectorIndex, _selectedSubSectorIndex, _activeProfile, _radialWindow, _lastEscapedState, presentationVersion, _interactionSession);
+			bool isSubmenuLocked = _submenuLock.IsLocked || _suppressPrimaryOnRelease;
+			_submenuLock.Reset();
+			_suppressPrimaryOnRelease = false;
+			var result = (_selectedSectorIndex, _selectedSubSectorIndex, _activeProfile, _radialWindow, _lastEscapedState, presentationVersion, _interactionSession, isSubmenuLocked);
 			_interactionSession = null;
 			_isGestureActive = false;
 			_isWaitingForThreshold = false;
@@ -419,6 +429,8 @@ public class GestureController : IDisposable
 			_selectedSubSectorIndex = -1;
 			_lastEscapedState = false;
 			_lastShowSubTier = false;
+			_submenuLock.Reset();
+			_suppressPrimaryOnRelease = false;
 			_highlightUpdateScheduled = false;
 		}
 	}
@@ -433,6 +445,29 @@ public class GestureController : IDisposable
 		var ending = EndActiveGesture();
 		ending.Interaction?.End("Closed");
 	}
+
+	internal void TestProcessMove(Point currentPoint)
+	{
+		ProcessMove(currentPoint);
+	}
+
+	internal (int Sector, int SubSector, bool Escaped, bool ShowSubTier) TestGetHoverState()
+	{
+		lock (_uiUpdateSync)
+		{
+			return (_selectedSectorIndex, _selectedSubSectorIndex, _lastEscapedState, _lastShowSubTier);
+		}
+	}
+
+	internal void TestSetStartPoint(Point p)
+	{
+		_startPoint = p;
+	}
+
+	internal SubmenuLockTracker TestSubmenuLock => _submenuLock;
+
+	internal void TestPrepareSubmenuGeometry() => _submenuLock.PrepareGeometry(ConfigManager.CurrentConfig, _activeProfile!);
+	internal void TestBeginGestureTracking() => BeginGestureTracking();
 
 	internal Action<ActionItem>? TestActionEnqueued { get; set; }
 	internal Action<ActionItem, ActionExecutionContext?>? TestActionEnqueuedWithContext { get; set; }
@@ -1649,6 +1684,7 @@ public class GestureController : IDisposable
 		RadialWindow? endedWindow = finalState.Window;
 		bool isEscaped = finalState.IsEscaped;
 		long endedPresentationVersion = finalState.PresentationVersion;
+		bool isSubmenuLocked = finalState.IsSubmenuLocked;
 		// 手势结束：同步复位音量接管状态，杜绝 took/active/baseline 残留污染下一手势。
 		_volumeAdjustActive = false;
 		_volumeGestureTookOver = false;
@@ -1700,7 +1736,14 @@ public class GestureController : IDisposable
 				{
 					if (finalSector >= 0)
 					{
-						targetAction = finalProfile.GetEffectiveAction(finalSector, finalSubSector);
+						if (isSubmenuLocked && finalSubSector < 0)
+						{
+							targetAction = null;
+						}
+						else
+						{
+							targetAction = finalProfile.GetEffectiveAction(finalSector, finalSubSector);
+						}
 					}
 					else if (finalSector == -1)
 					{
@@ -1883,6 +1926,9 @@ public class GestureController : IDisposable
 					}
 					_activeProfile.ActiveLayerIndex = nextIdx;
 					_activeProfile.SyncRootPropertiesFromActiveLayer();
+					_submenuLock.Reset();
+					_suppressPrimaryOnRelease = false;
+					QueueHighlightUpdate(-2, -1, false, false, GetCurrentGestureVersion());
 
 					// 这个判空不能删：_radialWindow 由 _uiUpdateSync 保护，且会在 hook 线程的异常路径里
 					// 被置回 null；而本段读它只持有 _mouseReleaseDebounceLock —— 两把锁不互斥，
@@ -1893,6 +1939,7 @@ public class GestureController : IDisposable
 						DispatchUi(() =>
 						{
 							rw.SwitchToLayer(nextIdx);
+							if (ConfigManager.CurrentConfig.LockParentSectorOnSubmenu) _submenuLock.PrepareGeometry(ConfigManager.CurrentConfig, _activeProfile);
 							Point pt = (_lastMovePoint != default) ? _lastMovePoint : _startPoint;
 							if (_isGestureActive && pt != default)
 							{
@@ -1943,6 +1990,9 @@ public class GestureController : IDisposable
 					int nextIdx = (curIdx + 1) % count;
 					_activeProfile.ActiveLayerIndex = nextIdx;
 					_activeProfile.SyncRootPropertiesFromActiveLayer();
+					_submenuLock.Reset();
+					_suppressPrimaryOnRelease = false;
+					QueueHighlightUpdate(-2, -1, false, false, GetCurrentGestureVersion());
 
 					// 这个判空不能删：_radialWindow 由 _uiUpdateSync 保护，且会在 hook 线程的异常路径里
 					// 被置回 null；而本段读它只持有 _mouseReleaseDebounceLock —— 两把锁不互斥，
@@ -1953,6 +2003,7 @@ public class GestureController : IDisposable
 						DispatchUi(() =>
 						{
 							rw.SwitchToLayer(nextIdx);
+							if (ConfigManager.CurrentConfig.LockParentSectorOnSubmenu) _submenuLock.PrepareGeometry(ConfigManager.CurrentConfig, _activeProfile);
 							Point pt = (_lastMovePoint != default) ? _lastMovePoint : _startPoint;
 							if (_isGestureActive && pt != default)
 							{
@@ -2087,6 +2138,7 @@ public class GestureController : IDisposable
 			RadialWindow? endedWindow = finalState.Window;
 			bool isEscaped = finalState.IsEscaped;
 			long endedPresentationVersion = finalState.PresentationVersion;
+			bool isSubmenuLocked = finalState.IsSubmenuLocked;
 			_volumeAdjustActive = false;
 			_volumeGestureTookOver = false;
 			_volumeBaseline = -1f;
@@ -2124,7 +2176,14 @@ public class GestureController : IDisposable
 				{
 					if (finalSector >= 0)
 					{
-						targetAction = finalProfile.GetEffectiveAction(finalSector, finalSubSector);
+						if (isSubmenuLocked && finalSubSector < 0)
+						{
+							targetAction = null;
+						}
+						else
+						{
+							targetAction = finalProfile.GetEffectiveAction(finalSector, finalSubSector);
+						}
 					}
 					else if (finalSector == -1)
 					{
@@ -2146,7 +2205,7 @@ public class GestureController : IDisposable
 				if (targetAction != null)
 				{
 					endedInteractionSession?.Confirm(targetAction, PluginInteractionSession.Target(finalSector, finalSubSector, isEscaped), isEscaped ? "Escaped" : "NoAction");
-					ActionExecutor.EnqueueAction(targetAction);
+					EnqueueGestureAction(targetAction);
 				}
 				else
 				{
@@ -2264,6 +2323,7 @@ public class GestureController : IDisposable
 
 	private void ProcessMove(Point currentPoint)
 	{
+		_suppressPrimaryOnRelease = false;
 		_lastMovePoint = currentPoint;
 		double moveScaleX = (_currentDpiScaleX > 0.0) ? _currentDpiScaleX : 1.0;
 		double moveScaleY = (_currentDpiScaleY > 0.0) ? _currentDpiScaleY : 1.0;
@@ -2282,7 +2342,11 @@ public class GestureController : IDisposable
 		}
 		bool flag2 = false;
 		double num7 = ((ConfigManager.CurrentConfig.SubWheelTriggerDistance > 20.0) ? ConfigManager.CurrentConfig.SubWheelTriggerDistance : 95.0);
-		if (num3 >= num6)
+		if (num3 < num6)
+		{
+			_submenuLock.Reset();
+		}
+		else
 		{
 			double wheelRadius = ConfigManager.CurrentConfig.WheelRadius;
 			bool enableMultiTier = ConfigManager.CurrentConfig.EnableMultiTier;
@@ -2302,6 +2366,18 @@ public class GestureController : IDisposable
 			}
 			double num13 = 360.0 / (double)num12;
 			num4 = (int)Math.Floor((num11 + num13 / 2.0) / num13) % num12;
+			bool isFan = ConfigManager.CurrentConfig.SubmenuStyle == "Fan";
+			bool lockEnabled = ConfigManager.CurrentConfig.LockParentSectorOnSubmenu;
+			if (lockEnabled)
+			{
+				// 先保持/解除父锁，外甩和音量门禁也必须使用这个实际父扇区。
+				num4 = _submenuLock.ResolveParentSector(true, enableMultiTier, isFan, num3, num4,
+					wheelRadius, ConfigManager.CurrentConfig);
+			}
+			else
+			{
+				_submenuLock.Reset();
+			}
 			bool isVolumeSector = IsVolumeSector(num4) || _volumeAdjustActive;
 			if (ConfigManager.CurrentConfig.EnableOuterEscapeCancel && !isVolumeSector)
 			{
@@ -2311,24 +2387,42 @@ public class GestureController : IDisposable
 					flag = true;
 					num4 = -1;
 					num5 = -1;
+					_submenuLock.Reset();
 				}
 			}
 			if (!flag)
 			{
-				bool isFan = ConfigManager.CurrentConfig.SubmenuStyle == "Fan";
-
-				// 蜂窝扇二级轮盘防抖与扇区保持锁定 (Hysteresis & Parent Sector Lock)
-				if (enableMultiTier && isFan && _lastShowSubTier && _selectedSectorIndex >= 0 && _selectedSectorIndex < (_activeProfile?.Actions.Count ?? 0))
+				if (lockEnabled)
 				{
-					double parentCenterAngle = (double)_selectedSectorIndex * num13;
-					double angleDiff = Math.Abs(NormalizeAngleDeg(num11 - parentCenterAngle));
-					double exitDist = Math.Max(25.0, num7 - 22.0);
-
-					// 在蜂窝扇已激活状态下，若光标距离未明显缩回内圈且处于展开扇面内（±num13 * 0.90），
-					// 锁定当前主扇区，彻底杜绝划向两侧子扇区时因极角越界而切回一级轮盘或跳变扇区
-					if (num3 >= exitDist && angleDiff <= num13 * 0.90)
+					// 子盘已展开但尚未进入花瓣时，仍允许直接划入该父项的可见侧翼。
+					if (!_submenuLock.IsLocked && isFan && enableMultiTier && _lastShowSubTier && _selectedSectorIndex >= 0)
 					{
-						num4 = _selectedSectorIndex;
+						ActionItem? previousParent = _activeProfile?.GetEffectiveAction(_selectedSectorIndex);
+						double angleDiff = Math.Abs(NormalizeAngleDeg(num11 - _selectedSectorIndex * num13));
+						int previousHit = _submenuLock.HitTestFan(ConfigManager.CurrentConfig, num, num2,
+							_selectedSectorIndex, num12, previousParent?.SubActions?.Count ?? 0, _selectedSubSectorIndex);
+						if (num3 >= SubmenuLockTracker.GetSubmenuExitDistance(ConfigManager.CurrentConfig, true, wheelRadius)
+							&& (previousHit >= 0 || angleDiff <= num13 * 0.90))
+						{
+							num4 = _selectedSectorIndex;
+						}
+					}
+				}
+				else
+				{
+					// 蜂窝扇二级轮盘防抖与扇区保持锁定 (Hysteresis & Parent Sector Lock - 遗留保持)
+					if (enableMultiTier && isFan && _lastShowSubTier && _selectedSectorIndex >= 0 && _selectedSectorIndex < (_activeProfile?.Actions.Count ?? 0))
+					{
+						double parentCenterAngle = (double)_selectedSectorIndex * num13;
+						double angleDiff = Math.Abs(NormalizeAngleDeg(num11 - parentCenterAngle));
+						double exitDist = Math.Max(25.0, num7 - 22.0);
+
+						// 在蜂窝扇已激活状态下，若光标距离未明显缩回内圈且处于展开扇面内（±num13 * 0.90），
+						// 锁定当前主扇区，彻底杜绝划向两侧子扇区时因极角越界而切回一级轮盘或跳变扇区
+						if (num3 >= exitDist && angleDiff <= num13 * 0.90)
+						{
+							num4 = _selectedSectorIndex;
+						}
 					}
 				}
 
@@ -2339,25 +2433,32 @@ public class GestureController : IDisposable
 					{
 						if (isFan)
 						{
-							double fanTriggerDist = (_lastShowSubTier && _selectedSectorIndex == num4)
+							double fanTriggerDist = ((_lastShowSubTier && _selectedSectorIndex == num4) || (lockEnabled && _submenuLock.IsLocked))
 								? Math.Max(25.0, num7 - 22.0)
 								: num7;
+							if (lockEnabled && _submenuLock.IsLocked)
+							{
+								fanTriggerDist = SubmenuLockTracker.GetSubmenuExitDistance(ConfigManager.CurrentConfig, true, wheelRadius);
+							}
 
 							if (num3 >= fanTriggerDist)
 							{
 								flag2 = true;
-								num5 = HitTestFanSubs(currentPoint, _startPoint, num4, actionItem.SubActions.Count);
+								num5 = lockEnabled
+									? _submenuLock.HitTestFan(ConfigManager.CurrentConfig, num, num2, num4, num12,
+										actionItem.SubActions.Count, _selectedSubSectorIndex)
+									: HitTestFanSubs(currentPoint, _startPoint, num4, actionItem.SubActions.Count);
 							}
 						}
 						else
 						{
-							if (num3 >= num7 || (ConfigManager.CurrentConfig.AutoExpandSubRingsOnPopup && ConfigManager.CurrentConfig.SubmenuStyle == "Wheel"))
+							if (num3 >= num7 || (ConfigManager.CurrentConfig.AutoExpandSubRingsOnPopup && ConfigManager.CurrentConfig.SubmenuStyle == "Wheel") || (lockEnabled && _submenuLock.IsLocked))
 							{
 								flag2 = true;
 							}
 							double num14 = ((ConfigManager.CurrentConfig.SubWheelInnerGap >= 0.0) ? ConfigManager.CurrentConfig.SubWheelInnerGap : 4.0);
 							double num15 = wheelRadius + num14 + 2.0;
-							if (num3 >= num15)
+							if (num3 >= num15 && (!lockEnabled || (flag2 && num3 <= num8)))
 							{
 								int count = actionItem.SubActions.Count;
 								double num16 = (double)num4 * num13 - num13 / 2.0;
@@ -2373,6 +2474,25 @@ public class GestureController : IDisposable
 								{
 									num5 = Math.Clamp((int)(num17 / (num13 / (double)count)), 0, count - 1);
 								}
+								else
+								{
+									num5 = -1;
+								}
+							}
+						}
+
+						// 安全守卫：在启用锁定时，若子项命中了未配置或禁用的槽位，清除命中，防止松手误触发
+						if (lockEnabled && num5 >= 0)
+						{
+							ActionItem? effectiveSub = num5 < actionItem.SubActions.Count ? actionItem.SubActions[num5] : null;
+							if (!WheelProfile.IsActionConfigured(effectiveSub) || (!isFan &&
+								!_submenuLock.ContainsWheelSub(ConfigManager.CurrentConfig, num, num2, num4, num12, actionItem.SubActions.Count, num5)))
+							{
+								num5 = -1;
+							}
+							else if (!_submenuLock.IsLocked && num3 >= SubmenuLockTracker.GetSubmenuEntryDistance(ConfigManager.CurrentConfig, isFan, wheelRadius))
+							{
+								_submenuLock.Lock(num4);
 							}
 						}
 					}
@@ -2382,8 +2502,15 @@ public class GestureController : IDisposable
 		// 音量"拖距调音"：音量加/减扇区越过子轮盘触发距离即接管为距离映射调音，屏蔽二级子轮盘
 		if (ProcessVolumeAdjust(num3, num4, flag, num7))
 		{
+			_submenuLock.Reset();
 			flag2 = false;
 			num5 = -1;
+		}
+		if (ConfigManager.CurrentConfig.LockParentSectorOnSubmenu && flag2)
+		{
+			bool isFan = ConfigManager.CurrentConfig.SubmenuStyle == "Fan";
+			_suppressPrimaryOnRelease = _submenuLock.IsLocked || num3 >= SubmenuLockTracker.GetSubmenuEntryDistance(
+				ConfigManager.CurrentConfig, isFan, ConfigManager.CurrentConfig.WheelRadius);
 		}
 		QueueHighlightUpdate(num4, num5, flag, flag2, GetCurrentGestureVersion());
 	}
@@ -2416,6 +2543,10 @@ public class GestureController : IDisposable
 		profile.ActiveLayerIndex = 0;
 		profile.SyncRootPropertiesFromActiveLayer();
 		_activeProfile = profile;
+		if (ConfigManager.CurrentConfig.LockParentSectorOnSubmenu)
+		{
+			_submenuLock.PrepareGeometry(ConfigManager.CurrentConfig, profile);
+		}
 
 		if (focusSession != null && !focusSession.IsCancelled && focusSession.TargetInfo.IsEligibleBackgroundTarget)
 		{
@@ -2489,6 +2620,11 @@ public class GestureController : IDisposable
 				}
 				SetCursorPos((int)Math.Round(actualCenter.X), (int)Math.Round(actualCenter.Y));
 				ProcessMove(actualCenter);
+			}
+			else if (ConfigManager.CurrentConfig.LockParentSectorOnSubmenu)
+			{
+				// 首帧可能先于冻结几何准备到达；展示后按最新坐标补算一次。
+				ProcessMove(_lastMovePoint);
 			}
 			return true;
 		}
@@ -2663,6 +2799,8 @@ public class GestureController : IDisposable
 		{
 			window = _radialWindow;
 			_radialWindow = null;
+			_submenuLock.Reset();
+			_suppressPrimaryOnRelease = false;
 			_isGestureActive = false;
 			_highlightUpdateScheduled = false;
 		}

@@ -866,6 +866,10 @@
                     <CheckBox Name="AutoExpandSubRingsCheckBox" Content="唤出时直接同时展开一二级轮盘" Style="{StaticResource ToggleSwitchStyle}" Margin="0,0,0,4" Checked="AutoExpandSubRingsCheckBox_Changed" Unchecked="AutoExpandSubRingsCheckBox_Changed" />
                     <TextBlock Name="AutoExpandSubRingsDescText" Text="开启后，呼出轮盘时所有已配置二级动作的外圈子环将与一级扇区同时呈现，无需向外划出触发距离即可一览全部操作。" FontSize="10.5" Foreground="{DynamicResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
                   </StackPanel>
+                  <StackPanel Name="LockParentSectorOnSubmenuPanel" Margin="0,10,0,0">
+                    <CheckBox Name="LockParentSectorOnSubmenuCheckBox" Style="{StaticResource ToggleSwitchStyle}" Margin="0,0,0,4" Checked="LockParentSectorOnSubmenuCheckBox_Changed" Unchecked="LockParentSectorOnSubmenuCheckBox_Changed" />
+                    <TextBlock Name="LockParentSectorOnSubmenuDescText" FontSize="10.5" Foreground="{DynamicResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                  </StackPanel>
                   <StackPanel Name="SubWheelTriggerDistancePanel" Margin="0,10,0,0">
                     <Grid Margin="0,0,0,4">
                       <TextBlock Name="SubWheelTriggerDistLabel" Text="二级轮盘展开触发距离:" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
