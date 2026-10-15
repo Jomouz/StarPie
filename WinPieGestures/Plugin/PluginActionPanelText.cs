@@ -24,6 +24,12 @@ namespace WinPieGestures.Plugins;
 /// </summary>
 internal static class PluginActionPanelText
 {
+    internal static (string Title, string Detail, string? Hint) Registered(
+        PluginActionRegistration registration, string pluginDisplayName) => Registered(
+            registration.CurrentDisplayName, registration.PluginId, pluginDisplayName,
+            registration.FullId, registration.Kind == StarPie.Plugin.ActionKind.Background,
+            registration.TimeoutSeconds, registration.CurrentDescription);
+
     /// <summary>
     /// 处境一：类型选了「插件动作」，但还没挑具体动作。
     /// </summary>

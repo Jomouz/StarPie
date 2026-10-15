@@ -12,7 +12,7 @@ namespace WinPieGestures.Plugins;
 /// 插件作者只能针对 SDK 编程，宿主内部怎么重构都不影响他们。
 /// </para>
 /// </summary>
-internal sealed class PluginContext : IInteractionPluginContext
+internal sealed class PluginContext : IInteractionPluginContext, IImageCapturePluginContext, ITextResultPluginContext
 {
     public PluginContext(
         PluginMetadata metadata,
@@ -47,6 +47,8 @@ internal sealed class PluginContext : IInteractionPluginContext
         Shell = new PluginShellService(metadata.Id, metadata.Capabilities);
         Windows = new PluginWindowService(metadata.Id, metadata.Capabilities);
         ScreenCapture = new PluginScreenCaptureService(metadata.Id, metadata.Capabilities);
+        Images = new PluginImageCaptureService(metadata.Id, metadata.Capabilities);
+        TextResults = new PluginTextResultService(metadata.Id, metadata.Capabilities);
         System = new PluginSystemService(metadata.Id, metadata.Capabilities);
         Wheel = new PluginWheelService(instance, metadata.Capabilities);
         KeyboardRemap = new PluginKeyboardRemapService(metadata.Id, metadata.Capabilities);
@@ -87,6 +89,10 @@ internal sealed class PluginContext : IInteractionPluginContext
 
     /// <summary>屏幕截取（框选截屏 + 文字识别）。</summary>
     public IHostScreenCaptureService ScreenCapture { get; }
+
+    public IHostImageCaptureService Images { get; }
+
+    public IHostTextResultService TextResults { get; }
 
     /// <summary>系统功能（最小化 / 任务视图 / 音量 / 锁屏 / 关机 …）。</summary>
     public IHostSystemService System { get; }

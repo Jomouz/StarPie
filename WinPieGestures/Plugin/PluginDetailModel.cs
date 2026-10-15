@@ -55,8 +55,8 @@ internal static class PluginDetailModelBuilder
                 .Select(action => new PluginFeatureItem
                 {
                     Id = action.ShortId,
-                    Name = action.DisplayName,
-                    Description = action.Description,
+                    Name = action.CurrentDisplayName,
+                    Description = action.CurrentDescription,
                     Category = action.Category,
                     IconKey = action.IconKey,
                 })
@@ -65,11 +65,9 @@ internal static class PluginDetailModelBuilder
 
         return new PluginDetailModel
         {
-            DisplayName = !string.IsNullOrWhiteSpace(instance.Entry.Name)
-                ? instance.Entry.Name
-                : (manifest?.Name ?? instance.PluginId),
+            DisplayName = PluginDisplayText.Name(instance),
             VersionText = string.IsNullOrWhiteSpace(instance.Entry.Version) ? "" : $"v{instance.Entry.Version}",
-            Description = !string.IsNullOrWhiteSpace(manifest?.Description) ? manifest!.Description : instance.Entry.Description,
+            Description = PluginDisplayText.Description(instance),
             Author = !string.IsNullOrWhiteSpace(manifest?.Author) ? manifest!.Author : instance.Entry.Author,
             License = !string.IsNullOrWhiteSpace(manifest?.License) ? manifest!.License : instance.Entry.License,
             Homepage = manifest?.Homepage ?? "",
@@ -150,9 +148,9 @@ internal static class PluginFeatureReader
                 result.Add(new PluginFeatureItem
                 {
                     Id = id,
-                    Name = name,
-                    Description = ReadString(item, "description"),
-                    Category = ReadString(item, "category"),
+                    Name = PluginDisplayText.ReadProperty(item, "name", name),
+                    Description = PluginDisplayText.ReadProperty(item, "description", ReadString(item, "description")),
+                    Category = PluginDisplayText.ReadProperty(item, "category", ReadString(item, "category")),
                     IconKey = ReadNullableString(item, "iconKey"),
                 });
             }

@@ -22,6 +22,7 @@ internal sealed class PluginActionRegistration
 
     /// <summary>插件声明的词条短键，原样保留。用于回答「我给的 key 为什么没生效」。</summary>
     public string? DisplayNameKey { get; init; }
+    public string CurrentDisplayName => PluginI18n.Resolve(PluginId, DisplayNameKey) ?? DisplayName;
 
     /// <summary>
     /// <see cref="DisplayName"/> 是否来自插件词条。
@@ -35,6 +36,7 @@ internal sealed class PluginActionRegistration
 
     public string Description { get; init; } = "";
     public string? DescriptionKey { get; init; }
+    public string CurrentDescription => PluginI18n.Resolve(PluginId, DescriptionKey) ?? Description;
     public bool ShowInActionPicker { get; init; } = true;
     public string Category { get; init; } = "";
     public string? IconKey { get; init; }

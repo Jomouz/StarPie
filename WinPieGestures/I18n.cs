@@ -2310,6 +2310,31 @@ Add("AboutCheckUpdate", "🔄 检查更新", "🔄 檢查更新", "🔄 Check fo
 		Add("ExclusiveRecordingBalloonRestored", "▶️ 已恢复全局热键与按键正常监听", "▶️ 已恢復全域快速鍵與按鍵正常監聽", "▶️ Global hotkeys and normal key listening restored", "▶️ グローバルキーと通常のキー監視を再開しました");
 		Add("ExclusiveRecordingBalloonRecorded", "✅ 已录制快捷键: {0}（已恢复全局热键）", "✅ 已錄入快速鍵: {0}（已恢復全域快速鍵）", "✅ Recorded hotkey: {0} (Global hotkeys restored)", "✅ ショートカットを記録しました: {0}（グローバルキー復帰）");
 
+		Add("ImageCaptureTitle", "StarPie 截屏框选", "StarPie 截圖框選", "StarPie screen selection", "StarPie 画面範囲選択");
+		Add("ImageCaptureGuide", "拖拽框选二维码区域", "拖曳框選 QR 碼區域", "Drag to select a QR code", "QRコードの範囲をドラッグ");
+		Add("ImageCaptureOcrGuide", "拖拽框选文字区域", "拖曳框選文字區域", "Drag to select text", "文字の範囲をドラッグ");
+		Add("ImageCaptureCancel", "右键 / Esc 取消", "右鍵 / Esc 取消", "Right click / Esc to cancel", "右クリック / Escでキャンセル");
+		Add("ImageCaptureHint", "松开完成 · 右键/Esc 取消", "放開完成 · 右鍵/Esc 取消", "Release to finish · Right click/Esc to cancel", "離して完了 · 右クリック/Escでキャンセル");
+		Add("TextResultHelp", "选择识别结果，查看完整内容后复制或打开链接。", "選擇辨識結果，查看完整內容後複製或開啟連結。", "Select a result and review its full content before copying or opening.", "結果を選び、内容を確認してからコピーまたはリンクを開いてください。");
+		Add("TextResultCopy", "复制内容", "複製內容", "Copy content", "内容をコピー");
+		Add("TextResultOpen", "打开链接", "開啟連結", "Open link", "リンクを開く");
+		Add("TextResultClose", "关闭", "關閉", "Close", "閉じる");
+		Add("TextResultTextOnly", "该内容不是可打开的 HTTP/HTTPS 网页链接。", "此內容不是可開啟的 HTTP/HTTPS 網頁連結。", "This content is not an HTTP/HTTPS web link.", "この内容はHTTP/HTTPSのウェブリンクではありません。");
+		Add("TextResultHeading", "识别成功", "辨識成功", "Scan complete", "認識しました");
+		Add("TextResultCountSingle", "找到 1 项内容。查看后选择复制或打开链接。", "找到 1 項內容。查看後選擇複製或開啟連結。", "Found 1 result. Review the content, then copy or open a link.", "1 件見つかりました。内容を確認してコピーまたはリンクを開いてください。");
+		Add("TextResultCount", "找到 {0} 项内容。查看后选择复制或打开链接。", "找到 {0} 項內容。查看後選擇複製或開啟連結。", "Found {0} results. Review the content, then copy or open a link.", "{0} 件見つかりました。内容を確認してコピーまたはリンクを開いてください。");
+		Add("TextResultListHeading", "识别结果", "辨識結果", "Results", "認識結果");
+		Add("TextResultFullContent", "完整内容", "完整內容", "Full content", "内容");
+		Add("TextResultFormatQr", "二维码", "QR 碼", "QR code", "QRコード");
+		Add("TextResultTypeLink", "网页链接", "網頁連結", "Web link", "ウェブリンク");
+		Add("TextResultTypeText", "文本内容", "文字內容", "Text", "テキスト");
+		Add("TextResultRowLabel", "{0} · {1}", "{0} · {1}", "{0} · {1}", "{0} · {1}");
+		Add("TextResultWebsite", "目标网站：{0}", "目標網站：{0}", "Website: {0}", "リンク先：{0}");
+		Add("TextResultLinkHint", "点击「打开链接」后使用默认浏览器访问。", "按一下「開啟連結」後使用預設瀏覽器前往。", "Open link uses your default browser.", "「リンクを開く」で既定のブラウザーを使用します。");
+		Add("TextResultTextHint", "此内容可复制，不会作为网页打开。", "此內容可複製，不會作為網頁開啟。", "You can copy this content. It is not a web link.", "コピーできます。ウェブリンクとしては開きません。");
+		Add("TextResultOpenHint", "仅打开 HTTP 或 HTTPS 网页链接。", "僅開啟 HTTP 或 HTTPS 網頁連結。", "Only HTTP or HTTPS web links can be opened.", "HTTPまたはHTTPSのウェブリンクのみ開けます。");
+		Add("TextResultKeyboardHint", "可选中文字复制 · Esc 关闭", "可選取文字複製 · Esc 關閉", "Select text to copy · Esc closes", "文字を選択してコピー · Escで閉じる");
+		Add("ImageCaptureSize", "{0} × {1} 像素", "{0} × {1} 像素", "{0} × {1} px", "{0} × {1} ピクセル");
 		Translations = dictionary;
 	}
 }
