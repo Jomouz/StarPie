@@ -98,9 +98,9 @@ internal static class PluginActionBinding
         // 若用户已经手写过名字，切换动作不应该把它冲掉。
         if (ShouldAutoFillName(action.Name))
         {
-            action.Name = string.IsNullOrWhiteSpace(registration.DisplayName)
+            action.Name = string.IsNullOrWhiteSpace(registration.CurrentDisplayName)
                 ? registration.ShortId
-                : registration.DisplayName;
+                : registration.CurrentDisplayName;
         }
 
         // 图标：空着、或上一次填的也是插件图标（说明是自动填的）时跟随动作走。
@@ -192,9 +192,9 @@ internal static class PluginActionBinding
                 items.Add(new PluginActionItem
                 {
                     FullId = registration.FullId,
-                    DisplayName = string.IsNullOrWhiteSpace(registration.DisplayName)
+                    DisplayName = string.IsNullOrWhiteSpace(registration.CurrentDisplayName)
                         ? registration.ShortId
-                        : registration.DisplayName,
+                        : registration.CurrentDisplayName,
                     PluginId = registration.PluginId,
                     GroupName = groupName,
                 });
@@ -246,7 +246,7 @@ internal static class PluginActionBinding
             PluginInstance? instance = PluginHost.Find(pluginId);
             if (instance != null && !string.IsNullOrWhiteSpace(instance.Entry.Name))
             {
-                return instance.Entry.Name!;
+                return PluginDisplayText.Name(instance);
             }
         }
         catch
@@ -276,7 +276,8 @@ internal static class PluginActionBinding
         {
             foreach (PluginActionRegistration registration in PluginHost.GetRegisteredActions())
             {
-                if (string.Equals(registration.DisplayName, name, StringComparison.Ordinal))
+                if (string.Equals(registration.DisplayName, name, StringComparison.Ordinal) ||
+                    string.Equals(registration.CurrentDisplayName, name, StringComparison.Ordinal))
                 {
                     return true;
                 }

@@ -678,7 +678,7 @@ public static class ActionExecutor
 		return null;
 	}
 
-	internal static void ExecuteWebUrl(string url, string? browserChoice, string? customBrowserPath)
+	internal static void ExecuteWebUrl(string url, string? browserChoice, string? customBrowserPath, bool privateResult = false)
 	{
 		if (string.IsNullOrWhiteSpace(url))
 		{
@@ -693,7 +693,8 @@ public static class ActionExecutor
 		}
 
 		string browser = browserChoice?.Trim() ?? "Default";
-		AppLogger.LogInfo($"Executing WebUrl: URL='{target}', Browser='{browser}', CustomPath='{customBrowserPath}'");
+		AppLogger.LogInfo(privateResult ? "Opening confirmed private web result." :
+			$"Executing WebUrl: URL='{target}', Browser='{browser}', CustomPath='{customBrowserPath}'");
 
 		try
 		{
@@ -758,6 +759,8 @@ public static class ActionExecutor
 		}
 		catch (Exception ex)
 		{
+			// QR/login payloads must not enter logs; the caller presents a localized failure.
+			if (privateResult) throw new InvalidOperationException($"Web result opening failed ({ex.GetType().Name}).");
 			AppLogger.LogError($"Failed to open WebUrl '{target}' with browser '{browser}'", ex);
 			try
 			{
@@ -776,9 +779,14 @@ public static class ActionExecutor
 
 	internal static void SafeSetClipboardText(string text)
 	{
+		TrySetClipboardText(text);
+	}
+
+	internal static bool TrySetClipboardText(string text)
+	{
 		if (string.IsNullOrEmpty(text))
 		{
-			return;
+			return false;
 		}
 		try
 		{
@@ -795,7 +803,7 @@ public static class ActionExecutor
 						System.Windows.Clipboard.SetText(text);
 					}
 				});
-				return;
+				return true;
 			}
 		}
 		catch
@@ -805,25 +813,28 @@ public static class ActionExecutor
 		// 备用：若 Dispatcher 不可用或发生跨线程异常，启动独立 STA 线程安全写入
 		try
 		{
+			bool copied = false;
 			Thread staThread = new Thread(() =>
 			{
 				try
 				{
 					System.Windows.Clipboard.SetDataObject(text, true);
+					copied = true;
 				}
 				catch
 				{
-					try { System.Windows.Clipboard.SetText(text); } catch { }
+					try { System.Windows.Clipboard.SetText(text); copied = true; } catch { }
 				}
 			});
 			staThread.SetApartmentState(ApartmentState.STA);
 			staThread.IsBackground = true;
 			staThread.Start();
-			staThread.Join(500);
+			return staThread.Join(500) && copied;
 		}
 		catch
 		{
 		}
+		return false;
 	}
 
 	internal static void ExecuteShellTool(string verb) => ExecuteShellToolCore(verb, StarPie.Plugin.ProcessLaunchMode.Default);

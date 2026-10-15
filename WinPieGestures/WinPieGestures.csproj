@@ -52,6 +52,8 @@
     <InternalsVisibleTo Include="test_sound_forensics" />
     <InternalsVisibleTo Include="test_wheel_focus" />
     <InternalsVisibleTo Include="test_interaction_events" />
+    <InternalsVisibleTo Include="test_qr_tools" />
+    <InternalsVisibleTo Include="test_qr_presentation" />
   </ItemGroup>
 
 

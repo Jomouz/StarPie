@@ -7047,13 +7047,7 @@ public partial class SettingsWindow : Window
 		// 插件名与子下拉的分组标题保持一致，用户才能把两处对上号；ID 另行标注，
 		// 排查问题时仍然需要它。这几行摘要的拼串全部收在 PluginActionPanelText 里。
 		var registered = PluginActionPanelText.Registered(
-			registration.DisplayName,
-			registration.PluginId,
-			PluginActionBinding.ResolvePluginDisplayName(registration.PluginId),
-			registration.FullId,
-			registration.Kind == StarPie.Plugin.ActionKind.Background,
-			registration.TimeoutSeconds,
-			PluginI18n.Resolve(registration.PluginId, registration.DescriptionKey) ?? registration.Description);
+			registration, PluginActionBinding.ResolvePluginDisplayName(registration.PluginId));
 		FocusPluginTitleText.Text = registered.Title;
 		FocusPluginDetailText.Text = registered.Detail;
 

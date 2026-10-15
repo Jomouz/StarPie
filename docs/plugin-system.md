@@ -60,6 +60,10 @@
 
 ## 5. 能力门禁
 
+SDK 1.12 候选通过可选派生上下文 IImageCapturePluginContext / ITextResultPluginContext 提供有界 BGRA32 截图及主题文本结果窗口。旧 IPluginContext 与 OCR 专用接口不变。新文本结果服务分别在展示、复制、打开时检查 Ui / Clipboard / Process；打开仅接受显式 HTTP(S)，不会记录私密链接。完整契约和限制见 [图片工具 API](../plugin/docs/image-tools.md)。
+
+当前 SDK 1.13 候选在上述接口上增加动态语言标题、可选增强服务广告及静态插件名称/说明翻译。扫码插件最低 apiVersion=1.12，检测到增强服务时使用动态标题，否则回退到已翻译的 ShowAsync 标题。SDK 1.11 缺少原始图片服务，仍拒绝扫码插件；新宿主继续接受旧 SDK 插件。主程序版本号与 SDK 程序集身份保持不变，兼容判断使用实际最低 API 次版本。
+
 产生后果的宿主服务检查各自能力：
 
 | 服务 | 能力 |

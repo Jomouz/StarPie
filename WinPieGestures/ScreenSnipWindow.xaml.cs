@@ -34,17 +34,36 @@ public partial class ScreenSnipWindow : Window
 	private readonly Action<Bitmap?> _onCaptured;
 	private Bitmap? _fullScreenBmp;
 	private bool _resourcesReleased;
+	private bool _completing;
+	private readonly int _maxSelectionPixels;
+	private readonly int _screenX;
+	private readonly int _screenY;
+	private readonly string? _guide;
+	private readonly string? _guideKey;
+	internal int CapturedScreenX { get; private set; }
+	internal int CapturedScreenY { get; private set; }
+	internal bool SelectionTooLarge { get; private set; }
 
-	public ScreenSnipWindow(Action<Bitmap?> onCaptured)
+	public ScreenSnipWindow(Action<Bitmap?> onCaptured, string? guide = null,
+		int maxSnapshotPixels = int.MaxValue, int maxSelectionPixels = int.MaxValue, string? guideKey = null)
 	{
 		InitializeComponent();
 		_onCaptured = onCaptured;
+		_maxSelectionPixels = maxSelectionPixels;
+		_guide = guide;
+		_guideKey = guideKey;
+		RefreshCaptureLanguage();
+		AppThemeManager.ApplyTheme(this, ConfigManager.CurrentConfig?.AppTheme ?? "System");
 
 		// 1. 获取真实多显示器全景物理边界
 		int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
 		int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
 		int vw = Math.Max(100, GetSystemMetrics(SM_CXVIRTUALSCREEN));
 		int vh = Math.Max(100, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+		_screenX = vx;
+		_screenY = vy;
+		if ((long)vw * vh > maxSnapshotPixels)
+			throw new InvalidOperationException("Desktop snapshot exceeds the capture memory budget.");
 
 		// 2. 瞬间冻结屏幕，抓取 24bpp 纯 RGB 全景物理快照（杜绝任何 Alpha 透明通道污染）
 		try
@@ -59,6 +78,9 @@ public partial class ScreenSnipWindow : Window
 		catch (Exception ex)
 		{
 			AppLogger.LogError("Failed to capture freeze full screen", ex);
+			_fullScreenBmp?.Dispose();
+			_fullScreenBmp = null;
+			if (maxSnapshotPixels != int.MaxValue) throw;
 		}
 
 		// 3. WPF 逻辑尺寸对齐虚拟桌面
@@ -75,6 +97,24 @@ public partial class ScreenSnipWindow : Window
 				SetWindowPos(handle, HWND_TOPMOST, vx, vy, vw, vh, SWP_NOACTIVATE | SWP_NOZORDER);
 			}
 		};
+		I18n.LanguageChanged += RefreshCaptureLanguage;
+	}
+
+	private void RefreshCaptureLanguage()
+	{
+		Title = I18n.T("ImageCaptureTitle");
+		GuideText.Text = _guideKey != null ? I18n.T(_guideKey) : _guide ?? I18n.T("ImageCaptureOcrGuide");
+		CancelText.Text = I18n.T("ImageCaptureCancel");
+		SelectionHint.Text = I18n.T("ImageCaptureHint");
+		if (IsLoaded) PositionGuide();
+	}
+
+	private void PositionGuide()
+	{
+		double available = Math.Max(1, ActualWidth - 32);
+		GuideBadge.MaxWidth = available;
+		GuideBadge.Measure(new System.Windows.Size(available, double.PositiveInfinity));
+		Canvas.SetLeft(GuideBadge, Math.Max(16, (ActualWidth - GuideBadge.DesiredSize.Width) / 2));
 	}
 
 	private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -85,7 +125,7 @@ public partial class ScreenSnipWindow : Window
 		double h = Math.Max(1.0, ActualHeight);
 		ScreenGeometry.Rect = new Rect(0, 0, w, h);
 		CutoutGeometry.Rect = Rect.Empty;
-		Canvas.SetLeft(GuideBadge, Math.Max(10, (w - 260) / 2));
+		PositionGuide();
 	}
 
 	private void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -139,9 +179,14 @@ public partial class ScreenSnipWindow : Window
 		SelectionBorder.Width = w;
 		SelectionBorder.Height = h;
 
-		SizeTextBlock.Text = $"{(int)w} × {(int)h}";
-		Canvas.SetLeft(InfoBadge, Math.Max(10, x));
-		Canvas.SetTop(InfoBadge, Math.Max(10, y - 32));
+		double scaleX = _fullScreenBmp == null ? 1 : _fullScreenBmp.Width / Math.Max(1, ActualWidth);
+		double scaleY = _fullScreenBmp == null ? 1 : _fullScreenBmp.Height / Math.Max(1, ActualHeight);
+		SizeTextBlock.Text = I18n.TF("ImageCaptureSize", (int)Math.Round(w * scaleX), (int)Math.Round(h * scaleY));
+		InfoBadge.MaxWidth = Math.Max(1, ActualWidth - 20);
+		InfoBadge.Measure(new System.Windows.Size(InfoBadge.MaxWidth, double.PositiveInfinity));
+		Canvas.SetLeft(InfoBadge, Math.Clamp(x, 10, Math.Max(10, ActualWidth - InfoBadge.DesiredSize.Width - 10)));
+		double badgeY = y >= InfoBadge.DesiredSize.Height + 12 ? y - InfoBadge.DesiredSize.Height - 8 : y + h + 8;
+		Canvas.SetTop(InfoBadge, Math.Clamp(badgeY, 10, Math.Max(10, ActualHeight - InfoBadge.DesiredSize.Height - 10)));
 	}
 
 	private void Window_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -185,6 +230,11 @@ public partial class ScreenSnipWindow : Window
 
 				if (cropW > 3 && cropH > 3)
 				{
+					CapturedScreenX = _screenX + cropX;
+					CapturedScreenY = _screenY + cropY;
+					SelectionTooLarge = (long)cropW * cropH > _maxSelectionPixels ||
+						(_maxSelectionPixels != int.MaxValue && (cropW > 4096 || cropH > 4096));
+					if (SelectionTooLarge) { CleanupAndClose(null); return; }
 					// 直接从纯净全景物理快照中裁出选区，零位移、零残影、零透明通道黑化
 					capturedSnippet = _fullScreenBmp.Clone(
 						new System.Drawing.Rectangle(cropX, cropY, cropW, cropH),
@@ -202,6 +252,7 @@ public partial class ScreenSnipWindow : Window
 
 	private void CleanupAndClose(Bitmap? result)
 	{
+		_completing = true;
 		ReleaseCaptureResources();
 
 		try
@@ -246,9 +297,15 @@ public partial class ScreenSnipWindow : Window
 
 	protected override void OnClosed(EventArgs e)
 	{
+		I18n.LanguageChanged -= RefreshCaptureLanguage;
 		// Alt+F4、应用退出等非标准关闭路径同样必须释放全屏快照和 WPF 图像引用。
 		ReleaseCaptureResources();
 		base.OnClosed(e);
+		if (!_completing)
+		{
+			_completing = true;
+			_onCaptured(null);
+		}
 	}
 
 	private static BitmapSource BitmapToBitmapSource(Bitmap bitmap)

@@ -94,9 +94,7 @@ internal sealed class PluginListItem
         PluginRegistryEntry entry = instance.Entry;
         StarPie.Plugin.PluginManifest? manifest = instance.Scan.Manifest;
 
-        string displayName = !string.IsNullOrWhiteSpace(entry.Name)
-            ? entry.Name
-            : (!string.IsNullOrWhiteSpace(manifest?.Name) ? manifest!.Name : instance.PluginId);
+        string displayName = PluginDisplayText.Name(instance);
 
         (string glyph, string stateText) = DescribeState(instance);
 
