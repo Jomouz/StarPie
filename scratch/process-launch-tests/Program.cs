@@ -18,13 +18,13 @@ internal static class Program
     {
         // 所有日志都在隔离目录；不打开窗口，不启动程序，不弹 UAC。
         Environment.SetEnvironmentVariable("LOCALAPPDATA", Path.Combine(Path.GetTempPath(), "StarPie-ProcessLaunchTests-" + Guid.NewGuid().ToString("N")));
-        Check(AppVersionInfo.DisplayVersion == "1.8.0-beta.5", "host release version is beta.5");
+        Check(AppVersionInfo.DisplayVersion == "2.0.0", "host release version matches the v2.0.0 candidate");
         Check(SimpleVersion.TryParse("1.8.0-beta.4", out var oldHost) &&
             SimpleVersion.TryParse("1.8.0-beta.5", out _), "minimum host versions parse");
         SimpleVersion.TryParse(AppVersionInfo.DisplayVersion, out var currentHost);
         SimpleVersion.TryParse("1.8.0-beta.5", out var minimum);
         Check(!SimpleVersion.SatisfiesMinimum(oldHost, minimum), "beta.4 cannot load beta.5 modules");
-        Check(SimpleVersion.SatisfiesMinimum(currentHost, minimum), "beta.5 accepts beta.5 modules");
+        Check(SimpleVersion.SatisfiesMinimum(currentHost, minimum), "current host accepts beta.5 modules");
         var info = new ProcessStartInfo("cmd.exe", "/c echo test")
         { UseShellExecute = false, WorkingDirectory = @"C:\test folder", CreateNoWindow = true };
         int processCalls = 0, shellCalls = 0;

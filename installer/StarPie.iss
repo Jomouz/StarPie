@@ -12,7 +12,7 @@
 ; 兜底版本号：正常由 build-installer.ps1 以 /DMyAppVersion=... 覆盖（脚本从 csproj 读 <Version>）。
 ; 直接编译本文件（或 ISCC 未传参）时会用到下面这两个值，所以每次发版也要一起改。
 #ifndef MyAppVersion
-  #define MyAppVersion "1.8.0-beta.7"
+  #define MyAppVersion "2.0.0"
 #endif
 
 #ifndef SourceDir
@@ -39,13 +39,13 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
-UninstallDisplayIcon={app}\{#MyAppExeName}
+UninstallDisplayIcon={app}\app_icon.ico
 
 ; 版本元数据信息 (显示于 Windows 资源管理器文件属性详细信息中)
 ; 同样是兜底值，与上面的 MyAppVersion 一起改：只改上面不改这里，
 ; 会出现「文件名是 beta.1、属性页里却是旧版号」的不一致。
 #ifndef MyAppNumericVersion
-  #define MyAppNumericVersion "1.8.0.0"
+  #define MyAppNumericVersion "2.0.0.0"
 #endif
 VersionInfoVersion={#MyAppNumericVersion}
 VersionInfoCompany={#MyAppPublisher}
@@ -105,9 +105,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autoprograms}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app_icon.ico"; IconIndex: 0
+Name: "{autoprograms}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"; IconFilename: "{app}\app_icon.ico"; IconIndex: 0
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\app_icon.ico"; IconIndex: 0
 
 [Run]
 ; 安装完成后提供直接启动 StarPie 的复选框（默认勾选）

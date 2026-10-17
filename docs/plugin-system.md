@@ -108,7 +108,7 @@ SDK 1.12 候选通过可选派生上下文 IImageCapturePluginContext / ITextRes
 - 宿主服务的元数据只有一份来源，并在访问时读取当前语言，不缓存翻译。
 - ShellTool 配置存短 ID；执行体兼容短 ID 与规范 Verb。`Verbs` 仅用于展示，不作为旧配置白名单。
 - SDK 版本字符串与 major/minor 常量需要自检保持一致；每次新增公共服务同步更新版本演进注释和契约测试。
-- 当前候选 SDK 为 1.11：1.8 增加 `ProcessLaunchMode`、三个显式模式启动入口与通用旧值回填；1.9 增加派生自 `IHostWheelService` 的 `IHostWheelSessionService`。旧接口和程序集身份保持不变。1.10 增加可选 IInteractionPluginContext 和只读交互贡献，Initialize 原子注册后由每插件有界队列调度；旧事件接口的同步契约不变。1.11 增量加入滑块、配置分区、同插件设置命令及可隐藏的兼容动作，见 [兼容说明](desktop-pet-sdk-compatibility.md)。
+- 当前 SDK API 为 1.13；主程序版本升至 2.0.0 不改变 SDK major 或程序集身份。1.8 增加 `ProcessLaunchMode`、三个显式模式启动入口与通用旧值回填；1.9 增加派生自 `IHostWheelService` 的 `IHostWheelSessionService`。1.10 增加可选交互上下文和只读贡献，旧同步事件契约不变；1.11 增加滑块、配置分区、同插件设置命令及可隐藏的兼容动作。1.12 增加有界图像获取与文本结果服务，1.13 增加动态本地化标题和增强服务检测；最低 1.12 消费者须检测增强接口并回退，不能直接依赖高版本方法。宿主/SDK/框架兼容分别校验，显式最高宿主限制仍生效。
 - 三态启动权限参数属于插件声明与 `ExtensionData`；未声明新值时可回填旧 `RunAsStandardUser`，显式新值优先，回填不自动写盘。固定权限启动失败或用户取消授权时，不得改用其他权限重试。
 - 轮盘会话服务装配到对应插件实例，通知与实例 generation、活动调用租约绑定。旧实例的服务不得操作重载后的会话；插件只追踪自己呼出的轮盘，不复制宿主扇区执行逻辑。
 

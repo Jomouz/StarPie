@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*.*.*'
       - 'V*.*.*'
+      # v2.0.0 is published locally without signing while the production CA
+      # certificate is pending. This exact-tag exception does not change the
+      # signing requirements for future releases; see docs/release.md.
+      - '!v2.0.0'
+      - '!V2.0.0'
   workflow_dispatch:
     inputs:
       tag:

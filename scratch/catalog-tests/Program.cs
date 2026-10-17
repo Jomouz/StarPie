@@ -20,6 +20,7 @@ internal static class Program
     static async Task Main()
     {
         Environment.SetEnvironmentVariable("LOCALAPPDATA",Path.Combine(Path.GetTempPath(),"StarPie-CatalogTests-"+Guid.NewGuid().ToString("N")));
+        VerifyMajorHostUpgrade();
         var low = new OfficialPluginEnvironment("1.8.0-beta.4","1.7","net8.0-windows10.0.19041.0");
         var high = new OfficialPluginEnvironment("1.8.0-beta.5","1.8","net8.0-windows10.0.19041.0");
         var old = Release("1.0.1","1.8.0-beta.1"); var latest = Release("1.1.0","1.8.0-beta.5","1.8");
@@ -77,5 +78,38 @@ internal static class Program
         var nullAsset=Release("1.0.0","1.8.0-beta.1");nullAsset.AssetName=null!;Reject(()=>OfficialPluginClient.ValidateCatalog(Catalog(Entry(nullAsset))));
         var nullHash=Release("1.0.0","1.8.0-beta.1");nullHash.Sha256=null!;Reject(()=>OfficialPluginClient.ValidateCatalog(Catalog(Entry(nullHash))));
         Console.WriteLine($"PASS: {checks} catalog/compatibility/cache checks; no network or GUI.");
+    }
+
+    static void VerifyMajorHostUpgrade()
+    {
+        var host = new OfficialPluginEnvironment("2.0.0", "1.13", PluginManifestReader.HostTargetFramework);
+        var previous = Release("1.0.0", "1.7.4", "1.0");
+        var current = Release("1.1.0", "1.8.0-beta.7", "1.13");
+        Check(OfficialPluginVersionSelector.Evaluate(previous, host).IsCompatible, "major host upgrade accepts an older SDK and host minimum");
+        Check(OfficialPluginVersionSelector.Select(Entry(previous, current), host).Compatible == current, "major host upgrade selects the newest compatible package");
+        current.MaxHostVersion = "1.99.0";
+        Check(OfficialPluginVersionSelector.Evaluate(current, host).Kind == OfficialPluginCompatibilityKind.HostTooNew, "major host upgrade enforces a 1.x upper bound");
+        Check(OfficialPluginVersionSelector.Select(Entry(previous, current), host).Compatible == previous, "major host upgrade falls back to compatible history");
+        Check(!new OfficialPluginListItem(Entry(previous, current), "1.1.0", host).CanInstall, "major host upgrade never silently downgrades an installed package");
+        current.MaxHostVersion = "2.0.0";
+        Check(OfficialPluginVersionSelector.Evaluate(current, host).IsCompatible, "host upper bound is inclusive");
+        Check(OfficialPluginVersionSelector.Evaluate(Release("1.0.0", "1.7.4", "2.0"), host).Kind == OfficialPluginCompatibilityKind.ApiUnsupported, "host 2.0 does not imply SDK API 2.0");
+        Check(OfficialPluginVersionSelector.Evaluate(Release("1.0.0", "1.7.4", "1.14"), host).Kind == OfficialPluginCompatibilityKind.ApiUnsupported, "host upgrade retains the SDK minor boundary");
+
+        string source = Path.Combine(Directory.GetCurrentDirectory(), "plugin", "StarPie-Official-Plugins", "src");
+        string[] manifests = Directory.GetDirectories(source)
+            .Select(directory => Path.Combine(directory, "plugin.json")).Where(File.Exists).ToArray();
+        Check(manifests.Length > 0, "pinned official plugin sources are present for compatibility verification");
+        foreach (string path in manifests)
+        {
+            Check(PluginManifestReader.TryLoad(path, out var manifest, out _, out string error, allowReservedIdPrefix: true),
+                "current host accepts pinned official manifest " + Path.GetFileName(Path.GetDirectoryName(path)) + ": " + error);
+            string? originalMaximum = manifest.MaxHostVersion;
+            manifest.MaxHostVersion = "1.99.0";
+            Check(!PluginManifestReader.Validate(manifest, out var failure, out _, allowReservedIdPrefix: true) &&
+                failure == PluginScanFailure.HostVersionOutOfRange, "actual manifest gate rejects a 1.x upper bound: " + manifest.Id);
+            manifest.MaxHostVersion = originalMaximum;
+            Check(PluginManifestReader.Validate(manifest, out _, out _, allowReservedIdPrefix: true), "restored source manifest remains compatible: " + manifest.Id);
+        }
     }
 }

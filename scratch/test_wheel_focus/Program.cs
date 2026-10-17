@@ -45,17 +45,16 @@ internal static class Program
 			_ = new Application();
 		}
 
-		// 3. 全局静态初始化防护：禁止自启同步，禁用音频与硬件交互
+		// 3. 全局静态初始化防护：禁止自启同步；隔离宿主未安装音效插件。
 		ConfigManager.DisableAutoStartSync = true;
 		ConfigManager.CurrentConfig = new AppConfig
 		{
-			EnableSoundEffects = false,
 			Trigger = new TriggerConfig { TriggerType = "Mouse", MouseButton = "RightButton" },
 			GestureEnabled = true,
 			GestureTriggerButton = "MiddleButton"
 		};
 
-		// 4. 接管所有系统副作用：按键释放、动作最终执行、音效播放
+		// 4. 接管所有系统副作用：按键释放、动作最终执行。宿主已无内置播放引擎。
 		ActionExecutor.ReleaseStuckModifiersOverride = () =>
 		{
 			Interlocked.Increment(ref _releaseStuckModifiersCallCount);
@@ -67,7 +66,6 @@ internal static class Program
 				_executedActions.Add((action, ctx));
 			}
 		};
-		SoundEffectManager.PlaybackSink = (bytes, flags) => { /* 假音效服务，零硬件交互 */ };
 
 		// 执行全部确定性生产路径测试
 		RunTest("Scenario 1: Normal hover trigger & exact action dispatch", TestNormalHoverTriggerAndFocus);
