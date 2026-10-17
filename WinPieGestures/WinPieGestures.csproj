@@ -39,7 +39,8 @@
     <Resource Include="logo.png" />
     <Resource Include="logo_dark.png" />
     <Resource Include="logo_light.png" />
-    <None Include="app_icon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Keep a physical ICO for installed shortcuts even in single-file publish. -->
+    <None Include="app_icon.ico" CopyToOutputDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <None Include="tray_icon.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
