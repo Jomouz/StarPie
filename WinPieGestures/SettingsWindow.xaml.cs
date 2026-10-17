@@ -185,8 +185,6 @@ public partial class SettingsWindow : Window
 	private int _selectedSlotIndex = 0; // -1: Center Core, 0..11: Sector slot
 	private int? _selectedSubActionIndex = null; // null: Primary slot / Center Core; 0..3: Secondary subaction
 	private readonly List<int> _selectedMultiSlots = new List<int>(); // Ctrl + Click multi-selection
-	private List<ActionItem>? _lastSubActionsBackup = null;
-	private int _lastSubActionsBackupSlotIndex = -1;
 	private bool _isUpdatingFocusUi = true;
 
 	/// <summary>
@@ -197,6 +195,7 @@ public partial class SettingsWindow : Window
 	private Point? _mappingsDragStartPos = null;
 	private int _dragSourceSlotIndex = -999; // -1: Center Core, >=0: Sector slot
 	private bool _isDraggingSlot = false;
+	private bool _isCommittingDrag = false;
 	private Point? _mappingsPanStartPoint = null;
 	private Point _mappingsPanStartTranslate = default;
 	private readonly List<System.Windows.Shapes.Path> _mappingsSectorPaths = new List<System.Windows.Shapes.Path>();
@@ -532,6 +531,16 @@ public partial class SettingsWindow : Window
 		_isUpdatingFocusUi = true;
 		InitializeComponent();
 		InitializeArtStyleStudio();
+		if (MappingsPreviewViewportContainer != null)
+		{
+			MappingsPreviewViewportContainer.LostMouseCapture += (s, e) =>
+			{
+				if (!_isCommittingDrag)
+				{
+					CancelCanvasDrag();
+				}
+			};
+		}
 		PluginHost.PluginAvailabilityChanged += HandlePluginAvailabilityChanged;
 		try
 		{
@@ -711,33 +720,75 @@ public partial class SettingsWindow : Window
 
 	private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
 	{
-		if (_isRecordingTrigger || _isRecordingProcessTrigger || ConfigManager.CurrentConfig == null || (Keyboard.Modifiers & ModifierKeys.Control) != ModifierKeys.Control)
+		if (_isRecordingTrigger || _isRecordingProcessTrigger || ConfigManager.CurrentConfig == null)
 		{
 			return;
 		}
+
+		if (e.Key == Key.Escape && _isDraggingSlot)
+		{
+			CancelCanvasDrag();
+			e.Handled = true;
+			return;
+		}
+		if (e.Key == Key.Escape && _listDragStartPos.HasValue)
+		{
+			CancelListDrag();
+			e.Handled = true;
+			return;
+		}
+
 		// 热键录入框一拿到键盘焦点就进入录制态，而窗口级 PreviewKeyDown 是先于控件的 tunnel，
 		// 不豁免就会把 Ctrl+0 / Ctrl+加 / Ctrl+减 直接吃掉，导致这三个组合键永远录不进去。
 		if (Keyboard.FocusedElement is HotkeyRecorderBox { IsRecording: true })
 		{
 			return;
 		}
-		switch (e.Key)
+
+		if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
 		{
-		case Key.Add:
-		case Key.OemPlus:
-			SetSettingsUiScale(_appliedSettingsUiScale + 0.05);
-			e.Handled = true;
-			break;
-		case Key.Subtract:
-		case Key.OemMinus:
-			SetSettingsUiScale(_appliedSettingsUiScale - 0.05);
-			e.Handled = true;
-			break;
-		case Key.D0:
-		case Key.NumPad0:
-			SetSettingsUiScale(1.0);
-			e.Handled = true;
-			break;
+			if (TryHandleActionEditingShortcut(e.Key, Keyboard.Modifiers, Keyboard.FocusedElement))
+			{
+				e.Handled = true;
+				return;
+			}
+
+			switch (e.Key)
+			{
+			case Key.Add:
+			case Key.OemPlus:
+				SetSettingsUiScale(_appliedSettingsUiScale + 0.05);
+				e.Handled = true;
+				break;
+			case Key.Subtract:
+			case Key.OemMinus:
+				SetSettingsUiScale(_appliedSettingsUiScale - 0.05);
+				e.Handled = true;
+				break;
+			case Key.D0:
+			case Key.NumPad0:
+				SetSettingsUiScale(1.0);
+				e.Handled = true;
+				break;
+			}
+		}
+	}
+
+	private bool TryHandleActionEditingShortcut(Key key, ModifierKeys modifiers, IInputElement? focusedElement)
+	{
+		if (MappingsSettingsGrid?.Visibility != Visibility.Visible ||
+			(modifiers & ModifierKeys.Control) == 0 ||
+			focusedElement is System.Windows.Controls.Primitives.TextBoxBase or PasswordBox or HotkeyRecorderBox)
+		{
+			return false;
+		}
+		switch (key)
+		{
+			case Key.Z: ExecuteUndo(); return true;
+			case Key.Y: ExecuteRedo(); return true;
+			case Key.C: CopyCurrentSelection(); return true;
+			case Key.V: PasteToCurrentSelection(); return true;
+			default: return false;
 		}
 	}
 
@@ -1784,6 +1835,7 @@ public partial class SettingsWindow : Window
 
 	public void ApplyLocalization()
 	{
+		RefreshAutoSaveStatus();
 		ReloadUiFontOptions();
 		base.Title = I18n.T("WindowTitle");
 		if (ConfigModeSimpleRadio != null)
@@ -3362,9 +3414,15 @@ public partial class SettingsWindow : Window
 		if (FocusInheritIconCaptureWindowBtn != null) { FocusInheritIconCaptureWindowBtn.Content = I18n.T("FocusInheritIconCaptureWindowBtnText"); FocusInheritIconCaptureWindowBtn.ToolTip = I18n.T("FocusInheritIconCaptureWindowBtnToolTip"); }
 		if (FocusInheritIconBrowseBtn != null) { FocusInheritIconBrowseBtn.Content = I18n.T("FocusInheritIconBrowseBtnText"); FocusInheritIconBrowseBtn.ToolTip = I18n.T("FocusInheritIconBrowseBtnToolTip"); }
 		if (FocusSubActionsSectionLabel != null) FocusSubActionsSectionLabel.Text = I18n.T("FocusSubActionsSectionLabel");
+		if (FocusCopyActionBtn != null) { FocusCopyActionBtn.Content = I18n.T("FocusCopyActionBtnText"); FocusCopyActionBtn.ToolTip = I18n.T("FocusCopyActionBtnToolTip"); }
+		if (FocusCopyCurrentActionMenuItem != null) FocusCopyCurrentActionMenuItem.Header = I18n.T("FocusCopyCurrentActionMenuItem");
+		if (FocusCopyEntireSectorMenuItem != null) FocusCopyEntireSectorMenuItem.Header = I18n.T("FocusCopyEntireSectorMenuItem");
+		if (FocusPasteActionBtn != null) { FocusPasteActionBtn.Content = I18n.T("FocusPasteActionBtnText"); FocusPasteActionBtn.ToolTip = I18n.T("FocusPasteActionBtnToolTip"); }
 		if (FocusAddSubActionBtn != null) FocusAddSubActionBtn.Content = I18n.T("FocusAddSubActionBtnText");
 		if (FocusClearSubActionsBtn != null) FocusClearSubActionsBtn.Content = I18n.T("FocusClearSubActionsBtnText");
 		if (FocusUndoSubActionsBtn != null) { FocusUndoSubActionsBtn.Content = I18n.T("FocusUndoSubActionsBtnText"); FocusUndoSubActionsBtn.ToolTip = I18n.T("FocusUndoSubActionsBtnToolTip"); }
+		if (FocusRedoSubActionsBtn != null) { FocusRedoSubActionsBtn.Content = I18n.T("FocusRedoSubActionsBtnText"); FocusRedoSubActionsBtn.ToolTip = I18n.T("FocusRedoSubActionsBtnToolTip"); }
+		if (FocusRestoreInheritanceBtn != null) FocusRestoreInheritanceBtn.Content = I18n.T("FocusRestoreInheritanceBtnText");
 
 		// Group 6: Batch Mode
 		if (FocusBatchBadgeText != null) FocusBatchBadgeText.Text = I18n.T("FocusBatchBadgeText");
@@ -3399,7 +3457,7 @@ public partial class SettingsWindow : Window
 		if (MappingsZoomLabel != null) MappingsZoomLabel.ToolTip = I18n.T("MappingsZoomLabelToolTip");
 		if (MappingsZoomInBtn != null) MappingsZoomInBtn.ToolTip = I18n.T("MappingsZoomInBtnToolTip");
 		if (MappingsResetViewBtn != null) MappingsResetViewBtn.ToolTip = I18n.T("MappingsResetViewBtnToolTip");
-		if (MappingsSaveNoticeText != null) MappingsSaveNoticeText.Text = I18n.T("MappingsSaveNotice");
+		if (MappingsSaveNoticeText != null) MappingsSaveNoticeText.Text = I18n.T("MappingsNoticeAutoSave");
 
 		// Group 8: Compact List Headers
 		if (ListModeProfileHeaderTitle != null) ListModeProfileHeaderTitle.Text = I18n.T("ListModeProfileHeaderTitle");
@@ -3611,27 +3669,7 @@ public partial class SettingsWindow : Window
 		// --- Dynamic ComboBoxes Multi-Language Hot Refresh ---
 		RefreshLayoutOptionsUi();
 		UpdateFocusActionTypeItemsSource(force: true);
-		if (FocusTileLayoutComboBox != null)
-		{
-			var selVal = FocusTileLayoutComboBox.SelectedValue;
-			FocusTileLayoutComboBox.ItemsSource = null;
-			FocusTileLayoutComboBox.ItemsSource = SlotViewModel.StaticTileLayoutOptions;
-			if (selVal != null) FocusTileLayoutComboBox.SelectedValue = selVal;
-		}
-		if (FocusCommandTerminalComboBox != null)
-		{
-			var selVal = FocusCommandTerminalComboBox.SelectedValue;
-			FocusCommandTerminalComboBox.ItemsSource = null;
-			FocusCommandTerminalComboBox.ItemsSource = SlotViewModel.LocalizedTerminals;
-			if (selVal != null) FocusCommandTerminalComboBox.SelectedValue = selVal;
-		}
-		if (FocusSystemPresetComboBox != null)
-		{
-			var selVal = FocusSystemPresetComboBox.SelectedValue;
-			FocusSystemPresetComboBox.ItemsSource = null;
-			FocusSystemPresetComboBox.ItemsSource = SlotViewModel.SystemPresetList;
-			if (selVal != null) FocusSystemPresetComboBox.SelectedValue = selVal;
-		}
+		RefreshFocusLocalizedChoices();
 		if (MappingsProfileComboBox != null)
 		{
 			var curProf = _selectedProfile;
@@ -3670,6 +3708,40 @@ public partial class SettingsWindow : Window
 		}
 
 		App.RefreshTrayMenu();
+	}
+
+	private void RefreshFocusLocalizedChoices()
+	{
+		bool wasUpdating = _isUpdatingFocusUi;
+		try
+		{
+			_isUpdatingFocusUi = true;
+			if (FocusTileLayoutComboBox != null)
+			{
+				var selVal = FocusTileLayoutComboBox.SelectedValue;
+				FocusTileLayoutComboBox.ItemsSource = null;
+				FocusTileLayoutComboBox.ItemsSource = SlotViewModel.StaticTileLayoutOptions;
+				if (selVal != null) FocusTileLayoutComboBox.SelectedValue = selVal;
+			}
+			if (FocusCommandTerminalComboBox != null)
+			{
+				var selVal = FocusCommandTerminalComboBox.SelectedValue;
+				FocusCommandTerminalComboBox.ItemsSource = null;
+				FocusCommandTerminalComboBox.ItemsSource = SlotViewModel.LocalizedTerminals;
+				if (selVal != null) FocusCommandTerminalComboBox.SelectedValue = selVal;
+			}
+			if (FocusSystemPresetComboBox != null)
+			{
+				var selVal = FocusSystemPresetComboBox.SelectedValue;
+				FocusSystemPresetComboBox.ItemsSource = null;
+				FocusSystemPresetComboBox.ItemsSource = SlotViewModel.SystemPresetList;
+				if (selVal != null) FocusSystemPresetComboBox.SelectedValue = selVal;
+			}
+		}
+		finally
+		{
+			_isUpdatingFocusUi = wasUpdating;
+		}
 	}
 
 	public void ShowSettings(int tabIndex = -1)
@@ -3824,6 +3896,7 @@ public partial class SettingsWindow : Window
 			return;
 		}
 		ConfigManager.MarkConfigurationChanged();
+		UpdateAutoSaveStatus(isSaving: true);
 		if (_autoSaveDebounceTimer == null)
 		{
 			_autoSaveDebounceTimer = new DispatcherTimer
@@ -3833,11 +3906,42 @@ public partial class SettingsWindow : Window
 			_autoSaveDebounceTimer.Tick += delegate
 			{
 				_autoSaveDebounceTimer.Stop();
-				SyncUiToConfigAndSave();
+				bool saved = SyncUiToConfigAndSave();
+				UpdateAutoSaveStatus(isSaving: false, success: saved);
 			};
 		}
 		_autoSaveDebounceTimer.Stop();
 		_autoSaveDebounceTimer.Start();
+	}
+
+	private bool _autoSaveIsSaving;
+	private bool _autoSaveSucceeded = true;
+
+	private void UpdateAutoSaveStatus(bool isSaving, bool success = true)
+	{
+		_autoSaveIsSaving = isSaving;
+		_autoSaveSucceeded = success;
+		RefreshAutoSaveStatus();
+	}
+
+	private void RefreshAutoSaveStatus()
+	{
+		if (AutoSaveStatusText == null) return;
+		if (_autoSaveIsSaving)
+		{
+			AutoSaveStatusText.Text = I18n.T("AutoSaveSaving");
+			AutoSaveStatusText.Foreground = new SolidColorBrush(Color.FromRgb(245, 158, 11));
+		}
+		else if (_autoSaveSucceeded)
+		{
+			AutoSaveStatusText.Text = I18n.T("AutoSaveSaved");
+			AutoSaveStatusText.Foreground = (Brush)FindResource("TextSecondaryBrush");
+		}
+		else
+		{
+			AutoSaveStatusText.Text = I18n.T("AutoSaveFailed");
+			AutoSaveStatusText.Foreground = new SolidColorBrush(Color.FromRgb(239, 68, 68));
+		}
 	}
 
 	// 返回是否确实写入成功。UI 初始化期间（_isUpdatingUi）或配置为空时直接返回 false，
@@ -5715,11 +5819,6 @@ public partial class SettingsWindow : Window
 	{
 		_selectedSlotIndex = parentSlotIndex;
 		_selectedSubActionIndex = subIndex;
-		WheelProfile? profile = _selectedProfile ?? ConfigManager.CurrentConfig?.Profiles.FirstOrDefault();
-		if (profile != null && !string.Equals(profile.ProcessName, "Global", StringComparison.OrdinalIgnoreCase) && ConfigManager.CurrentConfig?.EnableGlobalInheritance == true)
-		{
-			EnsureLocalSubActionForEdit(profile, parentSlotIndex, subIndex);
-		}
 		if (MappingsTier2SegmentRadio != null && MappingsTier2SegmentRadio.IsChecked != true)
 		{
 			_isUpdatingUi = true;
@@ -5727,7 +5826,7 @@ public partial class SettingsWindow : Window
 			finally { _isUpdatingUi = false; }
 		}
 		UpdateFocusEditorUi();
-		RefreshFocusSubActionsChips();
+		RefreshFocusSubActionsListAndChips();
 		RefreshSlots();
 		RenderMappingsWheelPreview();
 	}
@@ -5809,50 +5908,13 @@ public partial class SettingsWindow : Window
 	private ActionItem? EnsureLocalSubActionForEdit(WheelProfile profile, int slotIndex, int subIndex)
 	{
 		if (profile.Actions == null || slotIndex < 0 || slotIndex >= profile.Actions.Count) return null;
-		ActionItem primaryAction = profile.Actions[slotIndex];
+		ActionItem? primaryAction = EnsureLocalPrimaryActionForEdit(profile, slotIndex);
+		if (primaryAction == null) return null;
 		primaryAction.SubActions ??= new List<ActionItem>();
 
 		if (subIndex >= 0 && subIndex < primaryAction.SubActions.Count)
 		{
 			return primaryAction.SubActions[subIndex];
-		}
-
-		if (!string.Equals(profile.ProcessName, "Global", StringComparison.OrdinalIgnoreCase) &&
-		    ConfigManager.CurrentConfig?.EnableGlobalInheritance == true)
-		{
-			ActionItem? eff = profile.GetEffectiveAction(slotIndex);
-			if (eff != null && eff.IsInherited)
-			{
-				if (!WheelProfile.IsActionConfigured(primaryAction))
-				{
-					primaryAction.Name = eff.Name;
-					primaryAction.Type = eff.Type;
-					primaryAction.Parameter = eff.Parameter;
-					primaryAction.Arguments = eff.Arguments;
-					primaryAction.IconKey = eff.IconKey;
-					primaryAction.CustomIconSvg = eff.CustomIconSvg;
-					primaryAction.InheritAppIconPath = eff.InheritAppIconPath;
-					primaryAction.CommandTerminal = eff.CommandTerminal;
-					primaryAction.CustomIconSize = eff.CustomIconSize;
-					primaryAction.CustomTextColor = eff.CustomTextColor;
-					primaryAction.IsInherited = false;
-				}
-
-				if (eff.SubActions != null && eff.SubActions.Count > 0)
-				{
-					primaryAction.SubActions = eff.SubActions.Select(s =>
-					{
-						var cloned = s.Clone();
-						cloned.IsInherited = false;
-						return cloned;
-					}).ToList();
-
-					if (subIndex >= 0 && subIndex < primaryAction.SubActions.Count)
-					{
-						return primaryAction.SubActions[subIndex];
-					}
-				}
-			}
 		}
 
 		return null;
@@ -5870,29 +5932,10 @@ public partial class SettingsWindow : Window
 			ActionItem? eff = profile.GetEffectiveAction(slotIndex);
 			if (eff != null && eff.IsInherited)
 			{
-				primaryAction.Name = eff.Name;
-				primaryAction.Type = eff.Type;
-				primaryAction.Parameter = eff.Parameter;
-				primaryAction.Arguments = eff.Arguments;
-				primaryAction.IconKey = eff.IconKey;
-				primaryAction.CustomIconSvg = eff.CustomIconSvg;
-				primaryAction.InheritAppIconPath = eff.InheritAppIconPath;
-				primaryAction.CommandTerminal = eff.CommandTerminal;
-				primaryAction.CustomIconSize = eff.CustomIconSize;
-				primaryAction.CustomTextColor = eff.CustomTextColor;
-				primaryAction.IsInherited = false;
-				if (primaryAction.SubActions == null || primaryAction.SubActions.Count == 0)
-				{
-					if (eff.SubActions != null && eff.SubActions.Count > 0)
-					{
-						primaryAction.SubActions = eff.SubActions.Select(s =>
-						{
-							var cloned = s.Clone();
-							cloned.IsInherited = false;
-							return cloned;
-						}).ToList();
-					}
-				}
+				var cloned = eff.Clone();
+				cloned.IsInherited = false;
+				profile.Actions[slotIndex] = cloned;
+				return cloned;
 			}
 		}
 
@@ -5916,7 +5959,7 @@ public partial class SettingsWindow : Window
 				{
 					profile.CenterAction = new ActionItem
 					{
-						Name = "StarPie控制台",
+						Name = I18n.T("SysPresetName_OpenSettings"),
 						Type = "System",
 						Parameter = "OpenSettings",
 						IconKey = "Settings"
@@ -5988,6 +6031,8 @@ public partial class SettingsWindow : Window
 		_isUpdatingFocusUi = true;
 		try
 		{
+			// Every selection/profile/layer entry point must refresh the same editor context.
+			RefreshFocusSubActionsListAndChips();
 			ActionItem? item = GetCurrentFocusActionItem();
 			if (item == null) return;
 
@@ -6028,13 +6073,19 @@ public partial class SettingsWindow : Window
 				}
 				else if (_selectedSubActionIndex.HasValue)
 				{
-					if (primaryAction?.SubActions == null || _selectedSubActionIndex.Value >= primaryAction.SubActions.Count)
+					int subIdx = _selectedSubActionIndex.Value;
+					if (primaryAction?.SubActions == null || subIdx >= primaryAction.SubActions.Count)
 					{
-						effectiveInheritedAction = profile.GetEffectiveAction(_selectedSlotIndex);
-						if (effectiveInheritedAction != null && effectiveInheritedAction.IsInherited)
+						ActionItem? effParent = profile.GetEffectiveAction(_selectedSlotIndex);
+						if (effParent?.SubActions != null && subIdx >= 0 && subIdx < effParent.SubActions.Count)
 						{
+							effectiveInheritedAction = effParent.SubActions[subIdx];
 							isInherited = true;
 						}
+					}
+					else if (primaryAction.SubActions[subIdx].IsInherited)
+					{
+						isInherited = true;
 					}
 				}
 			}
@@ -6101,7 +6152,6 @@ public partial class SettingsWindow : Window
 				if (FocusActionTypeAndParamsBorder != null) FocusActionTypeAndParamsBorder.Visibility = Visibility.Collapsed;
 				if (FocusInheritIconBorder != null) FocusInheritIconBorder.Visibility = Visibility.Collapsed;
 				if (FocusSubActionsBorder != null) FocusSubActionsBorder.Visibility = Visibility.Visible;
-				RefreshFocusSubActionsChips();
 				return;
 			}
 			else if (_selectedSubActionIndex.HasValue)
@@ -6119,7 +6169,7 @@ public partial class SettingsWindow : Window
 				if (FocusTier2EmptyNoticeBorder != null) FocusTier2EmptyNoticeBorder.Visibility = Visibility.Collapsed;
 				if (FocusNameAndIconBorder != null) FocusNameAndIconBorder.Visibility = Visibility.Visible;
 				if (FocusActionTypeAndParamsBorder != null) FocusActionTypeAndParamsBorder.Visibility = Visibility.Visible;
-				if (FocusSubActionsBorder != null) FocusSubActionsBorder.Visibility = Visibility.Collapsed;
+				if (FocusSubActionsBorder != null) FocusSubActionsBorder.Visibility = Visibility.Visible;
 			}
 			else
 			{
@@ -6143,7 +6193,6 @@ public partial class SettingsWindow : Window
 				if (FocusNameAndIconBorder != null) FocusNameAndIconBorder.Visibility = Visibility.Visible;
 				if (FocusActionTypeAndParamsBorder != null) FocusActionTypeAndParamsBorder.Visibility = Visibility.Visible;
 				if (FocusSubActionsBorder != null) FocusSubActionsBorder.Visibility = Visibility.Visible;
-				RefreshFocusSubActionsChips();
 			}
 
 			// Name & Icon
@@ -6367,6 +6416,7 @@ public partial class SettingsWindow : Window
 		finally
 		{
 			_isUpdatingFocusUi = false;
+			ResetFocusEditSnapshot();
 		}
 	}
 
@@ -6432,7 +6482,7 @@ public partial class SettingsWindow : Window
 				Margin = new Thickness(2, 4, 0, 4)
 			};
 			FocusSubActionsChipsPanel.Children.Add(emptyText);
-			UpdateUndoSubActionsButtonState();
+			UpdateUndoRedoButtonStates();
 			return;
 		}
 
@@ -6490,7 +6540,7 @@ public partial class SettingsWindow : Window
 				catch { }
 			}
 
-			string chipName = string.IsNullOrEmpty(subItem.Name) ? $"子动作 {subIdx + 1}" : subItem.Name;
+			string chipName = string.IsNullOrEmpty(subItem.Name) ? I18n.TF("EditSubActionNumber", subIdx + 1) : subItem.Name;
 			if (isExceeded)
 			{
 				chipName += " (未激活)";
@@ -6530,14 +6580,7 @@ public partial class SettingsWindow : Window
 				deleteBtn.MouseLeftButtonDown += (s, e) =>
 				{
 					e.Handled = true;
-					BackupSubActionsForUndo(_selectedSlotIndex, primaryAction.SubActions);
-					primaryAction.SubActions.RemoveAt(subIdx);
-					if (_selectedSubActionIndex == subIdx) _selectedSubActionIndex = null;
-					else if (_selectedSubActionIndex > subIdx) _selectedSubActionIndex--;
-					UpdateFocusEditorUi();
-					RefreshSlots();
-					RenderMappingsWheelPreview();
-					ScheduleAutoSave();
+					DeleteSubAction(profile, _selectedSlotIndex, subIdx);
 				};
 				Grid.SetColumn(deleteBtn, 2);
 				chipGrid.Children.Add(deleteBtn);
@@ -6547,13 +6590,6 @@ public partial class SettingsWindow : Window
 			chip.MouseLeftButtonDown += (s, e) =>
 			{
 				e.Handled = true;
-				if (isUsingInheritedSubs)
-				{
-					EnsureLocalSubActionForEdit(profile, _selectedSlotIndex, subIdx);
-					RefreshSlots();
-					RefreshFocusSubActionsChips();
-					ScheduleAutoSave();
-				}
 				SelectSubAction(_selectedSlotIndex, subIdx);
 			};
 
@@ -6573,63 +6609,40 @@ public partial class SettingsWindow : Window
 			FocusSubActionsChipsPanel.Children.Add(inheritTip);
 		}
 
-		UpdateUndoSubActionsButtonState();
+		UpdateUndoRedoButtonStates();
 	}
 
 	private void FocusAddSubActionBtn_Click(object sender, RoutedEventArgs e)
 	{
 		if (_selectedSlotIndex < 0) return;
 		WheelProfile? profile = _selectedProfile ?? ConfigManager.CurrentConfig?.Profiles.FirstOrDefault();
-		if (profile?.Actions == null || _selectedSlotIndex >= profile.Actions.Count) return;
-		ActionItem primaryAction = profile.Actions[_selectedSlotIndex];
-		primaryAction.SubActions ??= new List<ActionItem>();
+		if (profile == null) return;
+		if (profile.Actions != null && _selectedSlotIndex >= profile.Actions.Count) return;
 
-		// 如果是非 Global 方案且属于继承扇区，将继承的主动作属性与可能已继承的子动作物化到本地专属方案
-		bool isGlobal = string.Equals(profile.ProcessName, "Global", StringComparison.OrdinalIgnoreCase);
-		bool inheritanceEnabled = ConfigManager.CurrentConfig?.EnableGlobalInheritance == true;
-		if (!isGlobal && inheritanceEnabled)
-		{
-			ActionItem? eff = profile.GetEffectiveAction(_selectedSlotIndex);
-			if (eff != null && eff.IsInherited)
-			{
-				if (!WheelProfile.IsActionConfigured(primaryAction))
-				{
-					primaryAction.Name = eff.Name;
-					primaryAction.Type = eff.Type;
-					primaryAction.Parameter = eff.Parameter;
-					primaryAction.Arguments = eff.Arguments;
-					primaryAction.IconKey = eff.IconKey;
-					primaryAction.CustomIconSvg = eff.CustomIconSvg;
-					primaryAction.InheritAppIconPath = eff.InheritAppIconPath;
-					primaryAction.CommandTerminal = eff.CommandTerminal;
-					primaryAction.CustomIconSize = eff.CustomIconSize;
-					primaryAction.CustomTextColor = eff.CustomTextColor;
-					primaryAction.IsInherited = false;
-				}
-				if (primaryAction.SubActions.Count == 0 && eff.SubActions != null && eff.SubActions.Count > 0)
-				{
-					primaryAction.SubActions = eff.SubActions.Select(s => {
-						var cloned = s.Clone();
-						cloned.IsInherited = false;
-						return cloned;
-					}).ToList();
-				}
-			}
-		}
+		ActionItem? eff = profile.GetEffectiveAction(_selectedSlotIndex);
+		var existingSubs = (profile.Actions != null && _selectedSlotIndex < profile.Actions.Count && profile.Actions[_selectedSlotIndex].SubActions != null)
+			? profile.Actions[_selectedSlotIndex].SubActions
+			: eff?.SubActions;
+		int currentCount = existingSubs?.Count ?? 0;
 
 		bool isFan = string.Equals(ConfigManager.CurrentConfig?.SubmenuStyle, "Fan", StringComparison.OrdinalIgnoreCase);
 		int maxAllowed = isFan ? 3 : 4;
-		if (primaryAction.SubActions.Count >= maxAllowed)
+		if (currentCount >= maxAllowed)
 		{
-			string styleName = isFan ? "蜂窝扇 (Honeycomb Fan)" : "外圈子环 (Sub-Ring)";
-			AppMessageBox.Show(this, $"当前二级菜单样式为【{styleName}】，每个主扇区最多支持配置 {maxAllowed} 个二级级联子动作。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+			string msg = isFan ? I18n.T("SubActionCapacityFanExceeded") : I18n.T("SubActionCapacitySubRingExceeded");
+			AppMessageBox.Show(this, msg, "StarPie", MessageBoxButton.OK, MessageBoxImage.Information);
 			return;
 		}
-		BackupSubActionsForUndo(_selectedSlotIndex, primaryAction.SubActions);
+
+		var before = CaptureSectorSnapshot(profile, _selectedSlotIndex);
+		EnsureLocalSlotForEdit(profile, _selectedSlotIndex);
+		ActionItem primaryAction = profile.Actions[_selectedSlotIndex];
+		primaryAction.SubActions ??= new List<ActionItem>();
+
 		int newIdx = primaryAction.SubActions.Count + 1;
 		primaryAction.SubActions.Add(new ActionItem
 		{
-			Name = $"子动作 {newIdx}",
+			Name = I18n.TF("EditSubActionNumber", newIdx),
 			Type = "Hotkey",
 			Parameter = "",
 			IconKey = ""
@@ -6641,8 +6654,12 @@ public partial class SettingsWindow : Window
 			try { MappingsTier2SegmentRadio.IsChecked = true; }
 			finally { _isUpdatingUi = false; }
 		}
+
+		var after = CaptureSectorSnapshot(profile, _selectedSlotIndex);
+		RecordSingleSectorTransaction(profile, _selectedSlotIndex, "EditAddChild", before, after);
+
 		UpdateFocusEditorUi();
-		RefreshFocusSubActionsChips();
+		RefreshFocusSubActionsListAndChips();
 		RefreshSlots();
 		RenderMappingsWheelPreview();
 		ScheduleAutoSave();
@@ -6653,121 +6670,33 @@ public partial class SettingsWindow : Window
 		if (_selectedSlotIndex < 0) return;
 		WheelProfile? profile = _selectedProfile ?? ConfigManager.CurrentConfig?.Profiles.FirstOrDefault();
 		if (profile?.Actions == null || _selectedSlotIndex >= profile.Actions.Count) return;
-		ActionItem primaryAction = profile.Actions[_selectedSlotIndex];
 
-		bool isGlobal = string.Equals(profile.ProcessName, "Global", StringComparison.OrdinalIgnoreCase);
-		bool inheritanceEnabled = ConfigManager.CurrentConfig?.EnableGlobalInheritance == true;
-		bool hasInheritedSubs = false;
-		ActionItem? eff = null;
-		if (!isGlobal && inheritanceEnabled && (primaryAction.SubActions == null || primaryAction.SubActions.Count == 0))
-		{
-			eff = profile.GetEffectiveAction(_selectedSlotIndex);
-			if (eff != null && eff.IsInherited && eff.SubActions != null && eff.SubActions.Count > 0)
-			{
-				hasInheritedSubs = true;
-			}
-		}
+		ActionItem? eff = profile.GetEffectiveAction(_selectedSlotIndex);
+		var existingSubs = (profile.Actions != null && _selectedSlotIndex < profile.Actions.Count && profile.Actions[_selectedSlotIndex].SubActions != null)
+			? profile.Actions[_selectedSlotIndex].SubActions
+			: eff?.SubActions;
 
-		if ((primaryAction.SubActions != null && primaryAction.SubActions.Count > 0) || hasInheritedSubs)
+		if (existingSubs != null && existingSubs.Count > 0)
 		{
-			if (AppMessageBox.Show(this, "确定要清空该扇区的所有二级动作吗？", "确认清空", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+			if (AppMessageBox.Show(this, I18n.T("EditClearChildrenConfirm"), "StarPie", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
 			{
-				BackupSubActionsForUndo(_selectedSlotIndex, primaryAction.SubActions);
-				if (hasInheritedSubs && eff != null)
-				{
-					if (!WheelProfile.IsActionConfigured(primaryAction))
-					{
-						primaryAction.Name = eff.Name;
-						primaryAction.Type = eff.Type;
-						primaryAction.Parameter = eff.Parameter;
-						primaryAction.Arguments = eff.Arguments;
-						primaryAction.IconKey = eff.IconKey;
-						primaryAction.CustomIconSvg = eff.CustomIconSvg;
-						primaryAction.InheritAppIconPath = eff.InheritAppIconPath;
-						primaryAction.CommandTerminal = eff.CommandTerminal;
-						primaryAction.CustomIconSize = eff.CustomIconSize;
-						primaryAction.CustomTextColor = eff.CustomTextColor;
-						primaryAction.IsInherited = false;
-					}
-				}
+				var before = CaptureSectorSnapshot(profile, _selectedSlotIndex);
+				EnsureLocalSlotForEdit(profile, _selectedSlotIndex);
+				ActionItem primaryAction = profile.Actions[_selectedSlotIndex];
+
 				primaryAction.SubActions ??= new List<ActionItem>();
 				primaryAction.SubActions.Clear();
 				_selectedSubActionIndex = null;
+
+				var after = CaptureSectorSnapshot(profile, _selectedSlotIndex);
+				RecordSingleSectorTransaction(profile, _selectedSlotIndex, "EditClearChildren", before, after);
+
 				UpdateFocusEditorUi();
-				RefreshFocusSubActionsChips();
+				RefreshFocusSubActionsListAndChips();
 				RefreshSlots();
 				RenderMappingsWheelPreview();
 				ScheduleAutoSave();
 			}
-		}
-	}
-
-	private void FocusUndoSubActionsBtn_Click(object sender, RoutedEventArgs e)
-	{
-		if (_selectedSlotIndex < 0 || _lastSubActionsBackup == null || _lastSubActionsBackupSlotIndex != _selectedSlotIndex) return;
-		WheelProfile? profile = _selectedProfile ?? ConfigManager.CurrentConfig?.Profiles.FirstOrDefault();
-		if (profile?.Actions == null || _selectedSlotIndex >= profile.Actions.Count) return;
-		ActionItem primaryAction = profile.Actions[_selectedSlotIndex];
-
-		var previous = primaryAction.SubActions;
-		primaryAction.SubActions = _lastSubActionsBackup;
-		_lastSubActionsBackup = previous?.Select(item => new ActionItem
-		{
-			Name = item.Name,
-			Type = item.Type,
-			Parameter = item.Parameter,
-			Arguments = item.Arguments,
-			IconKey = item.IconKey,
-			CustomIconSvg = item.CustomIconSvg,
-			InheritAppIconPath = item.InheritAppIconPath,
-			BrowserChoice = item.BrowserChoice,
-			BrowserPath = item.BrowserPath,
-			CommandTerminal = item.CommandTerminal,
-			RunAsStandardUser = item.RunAsStandardUser
-		}).ToList();
-
-		_selectedSubActionIndex = null;
-		UpdateUndoSubActionsButtonState();
-		UpdateFocusEditorUi();
-		RefreshSlots();
-		RenderMappingsWheelPreview();
-		ScheduleAutoSave();
-	}
-
-	private void BackupSubActionsForUndo(int slotIndex, List<ActionItem>? currentSubActions)
-	{
-		_lastSubActionsBackupSlotIndex = slotIndex;
-		if (currentSubActions == null)
-		{
-			_lastSubActionsBackup = null;
-		}
-		else
-		{
-			_lastSubActionsBackup = currentSubActions.Select(item => new ActionItem
-			{
-				Name = item.Name,
-				Type = item.Type,
-				Parameter = item.Parameter,
-				Arguments = item.Arguments,
-				IconKey = item.IconKey,
-				CustomIconSvg = item.CustomIconSvg,
-				InheritAppIconPath = item.InheritAppIconPath,
-				BrowserChoice = item.BrowserChoice,
-				BrowserPath = item.BrowserPath,
-				CommandTerminal = item.CommandTerminal,
-				RunAsStandardUser = item.RunAsStandardUser
-			}).ToList();
-		}
-		UpdateUndoSubActionsButtonState();
-	}
-
-	private void UpdateUndoSubActionsButtonState()
-	{
-		if (FocusUndoSubActionsBtn != null)
-		{
-			bool canUndo = _lastSubActionsBackup != null && _lastSubActionsBackupSlotIndex == _selectedSlotIndex;
-			FocusUndoSubActionsBtn.IsEnabled = canUndo;
-			FocusUndoSubActionsBtn.Opacity = canUndo ? 1.0 : 0.45;
 		}
 	}
 
@@ -6864,7 +6793,7 @@ public partial class SettingsWindow : Window
 
 	private void ApplyCenterPreset_OpenSettings(object sender, RoutedEventArgs e)
 	{
-		SetCenterCoreAction("StarPie控制台", "System", "OpenSettings", "Settings");
+		SetCenterCoreAction(I18n.T("SysPresetName_OpenSettings"), "System", "OpenSettings", "Settings");
 	}
 
 	private void ApplyCenterPreset_Desktop(object sender, RoutedEventArgs e)
@@ -6912,8 +6841,11 @@ public partial class SettingsWindow : Window
 		iconPickerWindow.Owner = this;
 		if (iconPickerWindow.ShowDialog() == true)
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.IconKey = iconPickerWindow.SelectedIconKey ?? "";
 			item.InheritAppIconPath = "";
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			UpdateFocusEditorUi();
 			RefreshSlots();
 			RenderMappingsWheelPreview();
@@ -6924,10 +6856,11 @@ public partial class SettingsWindow : Window
 	private void FocusActionNameTextBox_TextChanged(object sender, TextChangedEventArgs e)
 	{
 		if (_isUpdatingUi || _isUpdatingFocusUi || !_isUiInitialized || _isUiInitializing) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item != null)
 		{
 			item.Name = FocusActionNameTextBox.Text;
+			RecordFocusPropertyChange("EditActionName", coalesce: true);
 			RefreshSlots();
 			RenderMappingsWheelPreview();
 			ScheduleAutoSave();
@@ -6991,12 +6924,15 @@ public partial class SettingsWindow : Window
 		if (FocusPluginActionComboBox.SelectedValue is not string fullId || string.IsNullOrWhiteSpace(fullId)) return;
 
 		// 写失败说明插件刚好被停用 / 卸载 —— 保持原配置不动，重新拉一次候选让界面回到真实状态。
-		if (!PluginActionBinding.Apply(item, fullId))
+		if (!PluginHost.TryGetAction(fullId, out _))
 		{
 			RefreshFocusPluginActionComboBox(item);
 			return;
 		}
 
+		item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+		if (item == null || !PluginActionBinding.Apply(item, fullId)) return;
+		RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 		UpdateFocusEditorUi();
 		ScheduleAutoSave();
 	}
@@ -7189,6 +7125,7 @@ public partial class SettingsWindow : Window
     private void FocusContributedParams_Changed(object sender, EventArgs e)
     {
         if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+        RecordFocusPropertyChange("EditPluginParameters", coalesce: true);
         ScheduleAutoSave(); // 不重建焦点编辑器，避免下拉选中值和键盘焦点被重置。
     }
 
@@ -7203,6 +7140,7 @@ public partial class SettingsWindow : Window
 			// 那会重建槽位列表并连带刷新焦点编辑器，把用户正在输入的参数控件整个换掉 ——
 			// 外在表现就是「每敲一个字就失去焦点」。参数不影响槽位显示名，无需刷新列表。
 			RefreshFocusPluginValidation();
+			RecordFocusPropertyChange("EditPluginParameters", coalesce: true);
 			ScheduleAutoSave();
 		}
 		catch (Exception ex)
@@ -7218,7 +7156,7 @@ public partial class SettingsWindow : Window
 			{
 				// 每次取表单目标时都重新解析当前动作：切换扇区 / 换动作不会把写入指向旧对象。
 				ActionItem? item = GetCurrentFocusActionItem();
-				return item == null ? null : new ActionItemParameterTarget(item);
+				return item == null ? null : new ActionItemParameterTarget(item, () => GetCurrentFocusActionItem(ensureLocalForEdit: true));
 			},
 			OnFocusPluginParameterChanged);
 
@@ -8318,7 +8256,7 @@ public partial class SettingsWindow : Window
 	{
 		if (_isUpdatingUi || _isUpdatingFocusUi || !_isUiInitialized || _isUiInitializing) return;
 		if (FocusActionTypeComboBox == null) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item != null && FocusActionTypeComboBox.SelectedValue is string newType && !string.IsNullOrWhiteSpace(newType))
 		{
 			if (string.Equals(item.Type, newType, StringComparison.OrdinalIgnoreCase))
@@ -8327,6 +8265,7 @@ public partial class SettingsWindow : Window
 			}
 
 			SwitchFocusActionType(item, newType);
+			RecordFocusPropertyChange("EditActionType", coalesce: false);
 			UpdateFocusEditorUi();
 			RefreshSlots();
 			RenderMappingsWheelPreview();
@@ -8343,11 +8282,14 @@ public partial class SettingsWindow : Window
 		picker.Owner = this;
 		if (picker.ShowDialog() == true && picker.SelectedTool != null)
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			var tool = picker.SelectedTool;
 			item.Type = "ShellTool";
 			item.Parameter = tool.Id;
 			item.Name = tool.Name;
 			item.IconKey = tool.IconKey;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			UpdateFocusEditorUi();
 			RefreshSlots();
 			RenderMappingsWheelPreview();
@@ -8360,7 +8302,7 @@ public partial class SettingsWindow : Window
 		if (_isUpdatingUi || _isUpdatingFocusUi || !_isUiInitialized || _isUiInitializing) return;
 		if (FocusWindowSubModeComboBox == null) return;
 		if (FocusWindowManagerPanel == null || FocusWindowManagerPanel.Visibility != Visibility.Visible) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item == null) return;
 		bool wasWindowType = item.Type == "Tile" || item.Type == "ToggleTopmost" || item.Type == "MoveMonitor" || item.Type == "WindowOpacity" || item.Type == "SwitchWindow";
 		if (!wasWindowType) return;
@@ -8447,6 +8389,7 @@ public partial class SettingsWindow : Window
 
 		UpdateWindowSubModeVisibility(subMode);
 		if (FocusActionNameTextBox != null) FocusActionNameTextBox.Text = item.Name;
+		RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 		RefreshSlots();
 		RenderMappingsWheelPreview();
 		ScheduleAutoSave();
@@ -8468,13 +8411,14 @@ public partial class SettingsWindow : Window
 		if (_isUpdatingUi || _isUpdatingFocusUi || !_isUiInitialized || _isUiInitializing) return;
 		if (FocusTileLayoutComboBox == null) return;
 		if (FocusWindowManagerPanel == null || FocusWindowManagerPanel.Visibility != Visibility.Visible) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item == null || item.Type != "Tile") return;
 		if (FocusTileLayoutComboBox.SelectedValue is string layout && WindowTiler.IsValidLayout(layout))
 		{
 			item.Parameter = layout;
 			item.Name = "平铺: " + WindowTiler.LayoutDisplayName(layout);
 			if (FocusActionNameTextBox != null) FocusActionNameTextBox.Text = item.Name;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			RefreshSlots();
 			RenderMappingsWheelPreview();
 			ScheduleAutoSave();
@@ -8491,7 +8435,7 @@ public partial class SettingsWindow : Window
 	private void ApplyFocusTileLayout(string layout)
 	{
 		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item == null) return;
 		item.Type = "Tile";
 		item.Parameter = layout;
@@ -8502,6 +8446,7 @@ public partial class SettingsWindow : Window
 		}
 		if (FocusTileLayoutComboBox != null) FocusTileLayoutComboBox.SelectedValue = layout;
 		if (FocusActionNameTextBox != null) FocusActionNameTextBox.Text = item.Name;
+		RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 		RefreshSlots();
 		RenderMappingsWheelPreview();
 		ScheduleAutoSave();
@@ -8515,7 +8460,7 @@ public partial class SettingsWindow : Window
 
 	private void FocusPopulateTileSubActions_Click(object sender, RoutedEventArgs e)
 	{
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item == null) return;
 		List<ActionItem> list = new List<ActionItem>();
 		foreach (string key in WindowTiler.LayoutKeys.Take(7))
@@ -8525,6 +8470,7 @@ public partial class SettingsWindow : Window
 		list.Add(new ActionItem { Type = "Tile", Parameter = WindowTiler.RestoreParam, Name = I18n.T("TileRestoreAllLabel"), IconKey = "Tile" });
 		item.SubActions = list;
 		RefreshFocusSubActionsChips();
+		RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 		RefreshSlots();
 		RenderMappingsWheelPreview();
 		ScheduleAutoSave();
@@ -8535,12 +8481,13 @@ public partial class SettingsWindow : Window
 		if (_isUpdatingFocusUi) return;
 		int val = (int)e.NewValue;
 		if (FocusWindowOpacityLabel != null) FocusWindowOpacityLabel.Text = val + "%";
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item != null && item.Type == "WindowOpacity")
 		{
 			item.Parameter = val.ToString();
 			item.Name = $"透明度: {val}%";
 			if (FocusActionNameTextBox != null) FocusActionNameTextBox.Text = item.Name;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			RefreshSlots();
 			RenderMappingsWheelPreview();
 			ScheduleAutoSave();
@@ -8550,7 +8497,7 @@ public partial class SettingsWindow : Window
 	private void ApplyFocusOpacity(int opacity)
 	{
 		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item == null) return;
 		item.Type = "WindowOpacity";
 		item.Parameter = opacity.ToString();
@@ -8559,6 +8506,7 @@ public partial class SettingsWindow : Window
 		if (FocusWindowOpacitySlider != null) FocusWindowOpacitySlider.Value = opacity;
 		if (FocusWindowOpacityLabel != null) FocusWindowOpacityLabel.Text = opacity + "%";
 		if (FocusActionNameTextBox != null) FocusActionNameTextBox.Text = item.Name;
+		RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 		RefreshSlots();
 		RenderMappingsWheelPreview();
 		ScheduleAutoSave();
@@ -8572,13 +8520,14 @@ public partial class SettingsWindow : Window
 	private void FocusWindowSwitchTextBox_TextChanged(object sender, TextChangedEventArgs e)
 	{
 		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item != null && item.Type == "SwitchWindow")
 		{
 			string nth = FocusWindowSwitchTextBox?.Text?.Trim() ?? "1";
 			item.Parameter = string.IsNullOrEmpty(nth) ? "1" : nth;
 			item.Name = $"切换应用 #{item.Parameter}";
 			if (FocusActionNameTextBox != null) FocusActionNameTextBox.Text = item.Name;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			RefreshSlots();
 			RenderMappingsWheelPreview();
 			ScheduleAutoSave();
@@ -8588,7 +8537,7 @@ public partial class SettingsWindow : Window
 	private void ApplyFocusSwitchSlot(int slot)
 	{
 		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item == null) return;
 		item.Type = "SwitchWindow";
 		item.Parameter = slot.ToString();
@@ -8596,6 +8545,7 @@ public partial class SettingsWindow : Window
 		item.IconKey = "Window";
 		if (FocusWindowSwitchTextBox != null) FocusWindowSwitchTextBox.Text = slot.ToString();
 		if (FocusActionNameTextBox != null) FocusActionNameTextBox.Text = item.Name;
+		RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 		RefreshSlots();
 		RenderMappingsWheelPreview();
 		ScheduleAutoSave();
@@ -8671,6 +8621,8 @@ public partial class SettingsWindow : Window
 		};
 		if (dlg.ShowDialog() == true)
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.Parameter = dlg.ResultHotkey;
 			if (FocusHotkeyRecorder != null)
 			{
@@ -8678,6 +8630,7 @@ public partial class SettingsWindow : Window
 			}
 			RefreshSlots();
 			RenderMappingsWheelPreview();
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			ScheduleAutoSave();
 		}
 	}
@@ -8884,10 +8837,11 @@ public partial class SettingsWindow : Window
 				{
 					FocusHotkeyRecorder.SetRecordedHotkey(hotkeyStr);
 				}
-				var item = GetCurrentFocusActionItem();
+				var item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 				if (item != null)
 				{
 					item.Parameter = hotkeyStr;
+					RecordFocusPropertyChange("EditHotkey", coalesce: false);
 					RefreshSlots();
 					RenderMappingsWheelPreview();
 					ScheduleAutoSave();
@@ -8952,10 +8906,11 @@ public partial class SettingsWindow : Window
 	private void FocusHotkeyRecorder_HotkeyChanged(object? sender, string newKey)
 	{
 		if (_isUpdatingUi) return;
-		var item = GetCurrentFocusActionItem();
+		var item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item != null && item.Parameter != newKey)
 		{
 			item.Parameter = newKey ?? "";
+			RecordFocusPropertyChange("EditHotkey", coalesce: false);
 			RefreshSlots();
 			RenderMappingsWheelPreview();
 			ScheduleAutoSave();
@@ -8989,6 +8944,8 @@ public partial class SettingsWindow : Window
 		};
 		if (programPicker.ShowDialog() == true && !string.IsNullOrEmpty(programPicker.SelectedPath))
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.Parameter = programPicker.SelectedPath;
 			FocusLaunchPathTextBox.Text = programPicker.SelectedPath;
 			item.InheritAppIconPath = programPicker.SelectedPath;
@@ -8999,6 +8956,7 @@ public partial class SettingsWindow : Window
 				: System.IO.Path.GetFileNameWithoutExtension(programPicker.SelectedPath);
 			item.Name = autoName;
 			FocusActionNameTextBox.Text = autoName;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			UpdateFocusEditorUi();
 			RefreshSlots();
 			RenderMappingsWheelPreview();
@@ -9016,6 +8974,8 @@ public partial class SettingsWindow : Window
 		};
 		if (picker.ShowDialog() == true && !string.IsNullOrEmpty(picker.SelectedPath))
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.Parameter = picker.SelectedPath;
 			FocusLaunchPathTextBox.Text = picker.SelectedPath;
 			item.InheritAppIconPath = picker.SelectedPath;
@@ -9026,6 +8986,7 @@ public partial class SettingsWindow : Window
 				: (!string.IsNullOrEmpty(picker.SelectedProcessName) ? picker.SelectedProcessName : System.IO.Path.GetFileNameWithoutExtension(picker.SelectedPath));
 			item.Name = autoName;
 			FocusActionNameTextBox.Text = autoName;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			UpdateFocusEditorUi();
 			RefreshSlots();
 			RenderMappingsWheelPreview();
@@ -9046,6 +9007,8 @@ public partial class SettingsWindow : Window
 		};
 		if (dlg.ShowDialog(this) == true)
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.Parameter = dlg.FileName;
 			FocusLaunchPathTextBox.Text = dlg.FileName;
 			item.InheritAppIconPath = dlg.FileName;
@@ -9054,6 +9017,7 @@ public partial class SettingsWindow : Window
 			string autoName = System.IO.Path.GetFileNameWithoutExtension(dlg.FileName);
 			item.Name = autoName;
 			FocusActionNameTextBox.Text = autoName;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			UpdateFocusEditorUi();
 			RefreshSlots();
 			RenderMappingsWheelPreview();
@@ -9063,29 +9027,44 @@ public partial class SettingsWindow : Window
 
 	private void FocusLaunchPathTextBox_TextChanged(object sender, TextChangedEventArgs e)
 	{
-		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
-		if (item != null) { item.Parameter = FocusLaunchPathTextBox.Text; ScheduleAutoSave(); }
+		if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+		if (item != null)
+		{
+			item.Parameter = FocusLaunchPathTextBox.Text;
+			RecordFocusPropertyChange("EditLaunchPath", coalesce: true);
+			ScheduleAutoSave();
+		}
 	}
 
 	private void FocusLaunchArgsTextBox_TextChanged(object sender, TextChangedEventArgs e)
 	{
-		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
-		if (item != null) { item.Arguments = FocusLaunchArgsTextBox.Text; ScheduleAutoSave(); }
+		if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+		if (item != null)
+		{
+			item.Arguments = FocusLaunchArgsTextBox.Text;
+			RecordFocusPropertyChange("EditLaunchArguments", coalesce: true);
+			ScheduleAutoSave();
+		}
 	}
 
 	private void FocusWebUrlTextBox_TextChanged(object sender, TextChangedEventArgs e)
 	{
-		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
-		if (item != null) { item.Parameter = FocusWebUrlTextBox.Text; ScheduleAutoSave(); }
+		if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+		if (item != null)
+		{
+			item.Parameter = FocusWebUrlTextBox.Text;
+			RecordFocusPropertyChange("EditUrl", coalesce: true);
+			ScheduleAutoSave();
+		}
 	}
 
 	private void FocusWebBrowserComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
 	{
-		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item != null && FocusWebBrowserComboBox.SelectedItem is ComboBoxItem cbi)
 		{
 			item.BrowserChoice = cbi.Tag?.ToString() ?? "Default";
@@ -9093,15 +9072,21 @@ public partial class SettingsWindow : Window
 			{
 				FocusCustomBrowserPathPanel.Visibility = string.Equals(item.BrowserChoice, "Custom", StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed;
 			}
+			RecordFocusPropertyChange("EditBrowser", coalesce: false);
 			ScheduleAutoSave();
 		}
 	}
 
 	private void FocusCustomBrowserPathTextBox_TextChanged(object sender, TextChangedEventArgs e)
 	{
-		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
-		if (item != null) { item.BrowserPath = FocusCustomBrowserPathTextBox.Text; ScheduleAutoSave(); }
+		if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+		if (item != null)
+		{
+			item.BrowserPath = FocusCustomBrowserPathTextBox.Text;
+			RecordFocusPropertyChange("EditBrowserPath", coalesce: true);
+			ScheduleAutoSave();
+		}
 	}
 
 	private void FocusBrowseCustomBrowser_Click(object sender, RoutedEventArgs e)
@@ -9115,8 +9100,11 @@ public partial class SettingsWindow : Window
 		};
 		if (dlg.ShowDialog(this) == true)
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.BrowserPath = dlg.FileName;
 			FocusCustomBrowserPathTextBox.Text = dlg.FileName;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			ScheduleAutoSave();
 		}
 	}
@@ -9128,12 +9116,13 @@ public partial class SettingsWindow : Window
 
 	private void SetFocusWebUrl(string url, string name)
 	{
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item == null) return;
 		item.Type = "WebUrl";
 		item.Parameter = url;
 		item.Name = name;
 		if (string.IsNullOrEmpty(item.IconKey)) item.IconKey = "Globe";
+		RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 		UpdateFocusEditorUi();
 		RefreshSlots();
 		RenderMappingsWheelPreview();
@@ -9142,9 +9131,14 @@ public partial class SettingsWindow : Window
 
 	private void FocusFolderPathTextBox_TextChanged(object sender, TextChangedEventArgs e)
 	{
-		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
-		if (item != null) { item.Parameter = FocusFolderPathTextBox.Text; ScheduleAutoSave(); }
+		if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+		if (item != null)
+		{
+			item.Parameter = FocusFolderPathTextBox.Text;
+			RecordFocusPropertyChange("EditFolderPath", coalesce: true);
+			ScheduleAutoSave();
+		}
 	}
 
 	private void FocusBrowseFolder_Click(object sender, RoutedEventArgs e)
@@ -9159,6 +9153,8 @@ public partial class SettingsWindow : Window
 		};
 		if (fbd.ShowDialog() == System.Windows.Forms.DialogResult.OK)
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.Parameter = fbd.SelectedPath;
 			FocusFolderPathTextBox.Text = fbd.SelectedPath;
 			if (ActionNameDefaults.IsAutoFilled(item.Name))
@@ -9177,6 +9173,7 @@ public partial class SettingsWindow : Window
 			}
 			RefreshSlots();
 			RenderMappingsWheelPreview();
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			ScheduleAutoSave();
 		}
 	}
@@ -9190,10 +9187,11 @@ public partial class SettingsWindow : Window
 	private void FocusLaunchStandardUserCheckBox_Changed(object sender, RoutedEventArgs e)
 	{
 		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item != null)
 		{
 			item.RunAsStandardUser = (FocusLaunchStandardUserCheckBox.IsChecked == true);
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			ScheduleAutoSave();
 		}
 	}
@@ -9227,7 +9225,10 @@ public partial class SettingsWindow : Window
 		picker.Owner = this;
 		if (picker.ShowDialog() == true && !string.IsNullOrEmpty(picker.SelectedPath))
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.InheritAppIconPath = picker.SelectedPath;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			UpdateFocusEditorUi();
 			RefreshSlots();
 			RenderMappingsWheelPreview();
@@ -9243,7 +9244,10 @@ public partial class SettingsWindow : Window
 		picker.Owner = this;
 		if (picker.ShowDialog() == true && !string.IsNullOrEmpty(picker.SelectedPath))
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.InheritAppIconPath = picker.SelectedPath;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			UpdateFocusEditorUi();
 			RefreshSlots();
 			RenderMappingsWheelPreview();
@@ -9262,7 +9266,10 @@ public partial class SettingsWindow : Window
 		};
 		if (ofd.ShowDialog() == true)
 		{
+			item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+			if (item == null) return;
 			item.InheritAppIconPath = ofd.FileName;
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			UpdateFocusEditorUi();
 			RefreshSlots();
 			RenderMappingsWheelPreview();
@@ -9272,9 +9279,10 @@ public partial class SettingsWindow : Window
 
 	private void FocusClearInheritedIcon_Click(object sender, RoutedEventArgs e)
 	{
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item == null) return;
 		item.InheritAppIconPath = "";
+		RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 		UpdateFocusEditorUi();
 		RefreshSlots();
 		RenderMappingsWheelPreview();
@@ -9287,12 +9295,13 @@ public partial class SettingsWindow : Window
 
 	private void SetFocusFolder(string path, string name)
 	{
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item == null) return;
 		item.Type = "Folder";
 		item.Parameter = path;
 		item.Name = name;
 		item.IconKey = "Folder";
+		RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 		UpdateFocusEditorUi();
 		RefreshSlots();
 		RenderMappingsWheelPreview();
@@ -9301,18 +9310,24 @@ public partial class SettingsWindow : Window
 
 	private void FocusCommandTextBox_TextChanged(object sender, TextChangedEventArgs e)
 	{
-		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
-		if (item != null) { item.Parameter = FocusCommandTextBox.Text; ScheduleAutoSave(); }
+		if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
+		if (item != null)
+		{
+			item.Parameter = FocusCommandTextBox.Text;
+			RecordFocusPropertyChange("EditCommand", coalesce: true);
+			ScheduleAutoSave();
+		}
 	}
 
 	private void FocusCommandTerminalComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
 	{
-		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		if (_isUpdatingFocusUi || _isUpdatingUi || !_isUiInitialized) return;
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item != null && FocusCommandTerminalComboBox.SelectedValue is string terminal)
 		{
 			item.CommandTerminal = terminal;
+			RecordFocusPropertyChange("EditTerminal", coalesce: false);
 			ScheduleAutoSave();
 		}
 	}
@@ -9325,7 +9340,7 @@ public partial class SettingsWindow : Window
 	private void FocusSystemPresetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
 	{
 		if (_isUpdatingFocusUi) return;
-		ActionItem? item = GetCurrentFocusActionItem();
+		ActionItem? item = GetCurrentFocusActionItem(ensureLocalForEdit: true);
 		if (item != null && FocusSystemPresetComboBox.SelectedValue is string presetKey)
 		{
 			item.Parameter = presetKey;
@@ -9345,6 +9360,7 @@ public partial class SettingsWindow : Window
 					FocusIconPath.Data = !string.IsNullOrEmpty(sysSvg) ? Geometry.Parse(sysSvg) : null;
 				}
 			}
+			RecordFocusPropertyChange("EditActionProperty", coalesce: false);
 			RefreshSlots();
 			RenderMappingsWheelPreview();
 			ScheduleAutoSave();
@@ -9797,6 +9813,10 @@ public partial class SettingsWindow : Window
 			Panel.SetZIndex(coreGrid, 10);
 			MappingsWheelPreviewCanvas.Children.Add(coreGrid);
 
+			ClearCanvasHitItems();
+			EllipseGeometry coreGeo = new EllipseGeometry(new Point(centerX, centerY), coreR, coreR);
+			RegisterCanvasHitItem(coreGeo, new ActionAddress(profile.ProcessName, profile.ActiveLayerIndex, -1, null), isCenter: true, isSubAction: false, slotIndex: -1, subIndex: null, action: profile.CenterAction);
+
 			// 2. Draw Sectors (Icon-Only, Clean Aesthetic Style matching Appearance tab)
 			string[] directions = ResolveDirectionNames(sectorCount);
 
@@ -9814,6 +9834,8 @@ public partial class SettingsWindow : Window
 				double contentY = centerY + Math.Sin(rad) * midR;
 
 				Geometry sectorGeo = IconHelper.CreateAdvancedSectorGeometry(centerX, centerY, startAngle, endAngle, innerR, outerR, shape, gap, cornerRadius);
+				ActionItem? primarySlotAction = (profile.Actions != null && slotIdx < profile.Actions.Count) ? profile.Actions[slotIdx] : null;
+				RegisterCanvasHitItem(sectorGeo, new ActionAddress(profile.ProcessName, profile.ActiveLayerIndex, slotIdx, null), isCenter: false, isSubAction: false, slotIndex: slotIdx, subIndex: null, action: primarySlotAction);
 				bool isParentSlot = (_selectedSlotIndex == slotIdx);
 				bool isMultiSelected = (_selectedMultiSlots.Count > 1 && _selectedMultiSlots.Contains(slotIdx));
 				bool isSectorSelected = (isMultiSelected || (isParentSlot && _selectedSubActionIndex == null && _selectedMultiSlots.Count <= 1));
@@ -10178,9 +10200,8 @@ public partial class SettingsWindow : Window
 
 				if (action?.SubActions != null && action.SubActions.Count > 0 && shouldShowSub)
 				{
-					// 功能配置界面 (Tab 2) 统一强制采用外圈同心子环布局，彻底杜绝蜂窝扇展开时的相互遮挡与混乱堆叠；显示数量严格匹配当前二级菜单样式上限（蜂窝扇最多3个，外圈子环最多4个）
-					int maxSubCount = isFanMode ? 3 : 4;
-					int subCount = Math.Min(maxSubCount, action.SubActions.Count);
+					// 功能配置画布：外圈同心子环布局，显示全部子动作，不截断已有超额数据（如 8 项预设或历史配置）
+					int subCount = action.SubActions.Count;
 					double subSweep = sweepAngle / subCount;
 					double subInnerR = outerR + 4.0;
 					double subOuterR = subInnerR + 22.0;
@@ -10188,6 +10209,7 @@ public partial class SettingsWindow : Window
 					for (int j = 0; j < subCount; j++)
 					{
 						int subIdx = j;
+						bool isExceededInFan = isFanMode && (j >= 3);
 						double subMidAngle = startAngle + (j + 0.5) * subSweep;
 						double subStart = startAngle + j * subSweep;
 						double subEnd = startAngle + (j + 1) * subSweep;
@@ -10196,6 +10218,8 @@ public partial class SettingsWindow : Window
 						double subContentX = centerX + Math.Cos(subRad) * subMidR;
 						double subContentY = centerY + Math.Sin(subRad) * subMidR;
 						Geometry subGeo = IconHelper.CreateAdvancedSectorGeometry(centerX, centerY, subStart, subEnd, subInnerR, subOuterR, "Original", 1.5, 3.0);
+
+						RegisterCanvasHitItem(subGeo, new ActionAddress(profile.ProcessName, profile.ActiveLayerIndex, slotIdx, subIdx), isCenter: false, isSubAction: true, slotIndex: slotIdx, subIndex: subIdx, action: action.SubActions[j]);
 
 						bool isSubSelected = (_selectedSlotIndex == slotIdx && _selectedSubActionIndex == subIdx);
 
@@ -10209,9 +10233,15 @@ public partial class SettingsWindow : Window
 								? new SolidColorBrush(System.Windows.Media.Color.FromRgb(168, 85, 247)) 
 								: new SolidColorBrush(System.Windows.Media.Color.FromArgb(120, 168, 85, 247)),
 							StrokeThickness = isSubSelected ? 2.2 : 1.0,
+							Opacity = isExceededInFan ? 0.5 : 1.0,
 							Cursor = System.Windows.Input.Cursors.Hand,
 							IsHitTestVisible = false
 						};
+
+						if (isExceededInFan)
+						{
+							subPath.StrokeDashArray = new DoubleCollection { 2, 2 };
+						}
 
 						if (isSubSelected)
 						{
@@ -10353,63 +10383,20 @@ public partial class SettingsWindow : Window
 			_dragSourceSlotIndex = -999;
 			_isDraggingSlot = false;
 
-			double dx = pos.X - 150.0;
-			double dy = pos.Y - 150.0;
-			double dist = Math.Sqrt(dx * dx + dy * dy);
-
-			double baseScaleRef = Math.Max(215.0, (ConfigManager.CurrentConfig?.WheelRadius ?? 100.0) * 1.55);
-			double scaleFactor = 135.0 / baseScaleRef;
-			double coreR = Math.Max(10.0, (ConfigManager.CurrentConfig?.CoreRadius ?? 25.0) * scaleFactor);
-			double outerR = Math.Max(30.0, (ConfigManager.CurrentConfig?.WheelRadius ?? 100.0) * scaleFactor);
-
-			if (dist <= coreR)
+			CanvasHitItem? hit = HitTestCanvasPoint(pos);
+			if (hit != null)
 			{
-				_dragSourceSlotIndex = -1;
-			}
-			else if (dist <= outerR + 4.0)
-			{
-				WheelProfile profile = _selectedProfile ?? ConfigManager.CurrentConfig?.Profiles.FirstOrDefault() ?? new WheelProfile();
-				int sectorCount = profile.SectorCount > 0 ? profile.SectorCount : 8;
-				double angleDeg = Math.Atan2(dy, dx) * (180.0 / Math.PI);
-				if (angleDeg < 0) angleDeg += 360.0;
-				double sweep = 360.0 / sectorCount;
-				int slot = (int)Math.Floor((angleDeg + sweep / 2.0) / sweep) % sectorCount;
-				_dragSourceSlotIndex = slot;
-			}
-			else
-			{
-				bool isTier2Mode = (MappingsTier2SegmentRadio != null && MappingsTier2SegmentRadio.IsChecked == true);
-				WheelProfile profile = _selectedProfile ?? ConfigManager.CurrentConfig?.Profiles.FirstOrDefault() ?? new WheelProfile();
-				int sectorCount = profile.SectorCount > 0 ? profile.SectorCount : 8;
-				double angleDeg = Math.Atan2(dy, dx) * (180.0 / Math.PI);
-				if (angleDeg < 0) angleDeg += 360.0;
-				double sweep = 360.0 / sectorCount;
-				int slot = (int)Math.Floor((angleDeg + sweep / 2.0) / sweep) % sectorCount;
-
-				bool isFanMode = string.Equals(ConfigManager.CurrentConfig?.SubmenuStyle, "Fan", StringComparison.OrdinalIgnoreCase);
-				bool isSubVisible = !isFanMode || isTier2Mode || (_selectedSlotIndex == slot);
-				if (isSubVisible && dist <= outerR + 50.0)
+				if (hit.IsCenter)
 				{
-					ActionItem? effAction = profile.GetEffectiveAction(slot);
-					var targetSubs = (slot >= 0 && slot < profile.Actions.Count && profile.Actions[slot].SubActions != null && profile.Actions[slot].SubActions.Count > 0)
-						? profile.Actions[slot].SubActions
-						: effAction?.SubActions;
-
-					if (targetSubs != null && targetSubs.Count > 0)
-					{
-						int subCount = targetSubs.Count;
-						double slotStartAngle = (double)slot * sweep - sweep / 2.0;
-						double relAngle = angleDeg - slotStartAngle;
-						while (relAngle < 0) relAngle += 360.0;
-						while (relAngle >= 360.0) relAngle -= 360.0;
-						double subSweep = sweep / subCount;
-						int subIdx = (int)Math.Floor(relAngle / subSweep);
-						if (subIdx >= subCount) subIdx = subCount - 1;
-						if (subIdx >= 0)
-						{
-							_dragSourceSlotIndex = -100 - (slot * 100 + subIdx);
-						}
-					}
+					_dragSourceSlotIndex = -1;
+				}
+				else if (hit.IsSubAction && hit.SubIndex.HasValue)
+				{
+					_dragSourceSlotIndex = -100 - (hit.SlotIndex * 100 + hit.SubIndex.Value);
+				}
+				else
+				{
+					_dragSourceSlotIndex = hit.SlotIndex;
 				}
 			}
 
@@ -10438,7 +10425,7 @@ public partial class SettingsWindow : Window
 		{
 			Point currentPos = e.GetPosition(MappingsWheelPreviewCanvas);
 			double dragDist = (currentPos - _mappingsDragStartPos.Value).Length;
-			if (dragDist > 8.0 && !_isDraggingSlot)
+			if (dragDist > 6.0 && !_isDraggingSlot)
 			{
 				_isDraggingSlot = true;
 			}
@@ -10446,330 +10433,114 @@ public partial class SettingsWindow : Window
 			if (_isDraggingSlot)
 			{
 				MappingsPreviewViewportContainer.Cursor = System.Windows.Input.Cursors.Hand;
-				WheelProfile? profile = _selectedProfile ?? ConfigManager.CurrentConfig?.Profiles.FirstOrDefault();
-				string srcName = "";
-				if (_dragSourceSlotIndex == -1)
-				{
-					srcName = profile?.CenterAction?.Name ?? "中心核圆";
-				}
-				else if (_dragSourceSlotIndex >= 0 && profile != null && _dragSourceSlotIndex < profile.Actions.Count)
-				{
-					srcName = profile.Actions[_dragSourceSlotIndex].Name ?? $"扇区 {_dragSourceSlotIndex + 1}";
-				}
-				else if (_dragSourceSlotIndex <= -100 && profile != null && profile.Actions != null)
-				{
-					int raw = -_dragSourceSlotIndex - 100;
-					int slot = raw / 100;
-					int subIdx = raw % 100;
-					if (slot >= 0 && slot < profile.Actions.Count)
-					{
-						ActionItem? eff = profile.GetEffectiveAction(slot);
-						var subs = (profile.Actions[slot].SubActions != null && subIdx < profile.Actions[slot].SubActions.Count)
-							? profile.Actions[slot].SubActions
-							: eff?.SubActions;
-						if (subs != null && subIdx < subs.Count)
-						{
-							srcName = subs[subIdx].Name ?? $"子动作 {subIdx + 1}";
-						}
-					}
-				}
-
-				if (MappingsCurrentEditIndicator != null && !string.IsNullOrEmpty(srcName))
-				{
-					string tip = (_dragSourceSlotIndex <= -100) 
-						? "释放到目标二级子扇区以对调子动作顺序..." 
-						: "释放到目标扇区以对调功能...";
-					MappingsCurrentEditIndicator.Text = $"🔄 正在拖拽 [{srcName}]，{tip}";
-					MappingsCurrentEditIndicator.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 158, 11));
-				}
+				bool isCtrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+				UpdateCanvasDragHover(currentPos, isCtrl);
 			}
 		}
 	}
 
 	private void MappingsPreviewViewport_MouseUp(object sender, MouseButtonEventArgs e)
 	{
-		if (MappingsPreviewViewportContainer.IsMouseCaptured)
+		_isCommittingDrag = true;
+		try
 		{
-			MappingsPreviewViewportContainer.ReleaseMouseCapture();
-			_mappingsPanStartPoint = null;
-		}
-
-		MappingsPreviewViewportContainer.Cursor = System.Windows.Input.Cursors.Arrow;
-
-		if (e.ChangedButton == MouseButton.Left && _mappingsDragStartPos.HasValue && _dragSourceSlotIndex != -999)
-		{
-			Point upPos = e.GetPosition(MappingsWheelPreviewCanvas);
-			double dragDist = (upPos - _mappingsDragStartPos.Value).Length;
-
-			if (_isDraggingSlot && dragDist > 10.0)
+			if (e.ChangedButton == MouseButton.Left && _mappingsDragStartPos.HasValue && _dragSourceSlotIndex != -999)
 			{
-				double dx = upPos.X - 150.0;
-				double dy = upPos.Y - 150.0;
-				double dist = Math.Sqrt(dx * dx + dy * dy);
+				Point upPos = e.GetPosition(MappingsWheelPreviewCanvas);
+				double dragDist = (upPos - _mappingsDragStartPos.Value).Length;
 
-				double baseScaleRef = Math.Max(215.0, (ConfigManager.CurrentConfig?.WheelRadius ?? 100.0) * 1.55);
-				double scaleFactor = 135.0 / baseScaleRef;
-				double coreR = Math.Max(10.0, (ConfigManager.CurrentConfig?.CoreRadius ?? 25.0) * scaleFactor);
-				double outerR = Math.Max(30.0, (ConfigManager.CurrentConfig?.WheelRadius ?? 100.0) * scaleFactor);
-
-				WheelProfile? profile = _selectedProfile ?? ConfigManager.CurrentConfig?.Profiles.FirstOrDefault();
-				if (profile != null && profile.Actions != null)
+				if (_isDraggingSlot && dragDist > 6.0)
 				{
-					int sectorCount = profile.SectorCount > 0 ? profile.SectorCount : 8;
-					double angleDeg = Math.Atan2(dy, dx) * (180.0 / Math.PI);
-					if (angleDeg < 0) angleDeg += 360.0;
-					double sweep = 360.0 / sectorCount;
+					bool isCtrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+					CanvasHitItem? target = HitTestCanvasPoint(upPos);
+					WheelProfile? profile = GetSelectedProfile();
 
-					if (_dragSourceSlotIndex <= -100)
+					if (target != null && profile != null && profile.Actions != null)
 					{
-						// === 二级子动作拖拽换位 ===
-						int raw = -_dragSourceSlotIndex - 100;
-						int srcSlot = raw / 100;
-						int srcSubIdx = raw % 100;
-
-						if (srcSlot >= 0 && srcSlot < profile.Actions.Count && 
-							profile.Actions[srcSlot].SubActions != null && 
-							srcSubIdx < profile.Actions[srcSlot].SubActions.Count)
-						{
-							int targetSlot = (int)Math.Floor((angleDeg + sweep / 2.0) / sweep) % sectorCount;
-							if (targetSlot >= 0 && targetSlot < profile.Actions.Count)
-							{
-								var srcList = profile.Actions[srcSlot].SubActions;
-								var tgtAction = profile.Actions[targetSlot];
-
-								if (tgtAction.SubActions != null && tgtAction.SubActions.Count > 0)
-								{
-									int tgtSubCount = tgtAction.SubActions.Count;
-									double slotStartAngle = (double)targetSlot * sweep - sweep / 2.0;
-									double relAngle = angleDeg - slotStartAngle;
-									while (relAngle < 0) relAngle += 360.0;
-									while (relAngle >= 360.0) relAngle -= 360.0;
-									double subSweep = sweep / tgtSubCount;
-									int targetSubIdx = (int)Math.Floor(relAngle / subSweep);
-									if (targetSubIdx >= tgtSubCount) targetSubIdx = tgtSubCount - 1;
-
-									if (targetSlot == srcSlot)
-									{
-										if (targetSubIdx != srcSubIdx)
-										{
-											ActionItem srcItem = srcList[srcSubIdx];
-											ActionItem tgtItem = srcList[targetSubIdx];
-											srcList[srcSubIdx] = tgtItem;
-											srcList[targetSubIdx] = srcItem;
-
-											SelectSubAction(srcSlot, targetSubIdx);
-											RefreshSlots();
-											RenderMappingsWheelPreview();
-											ScheduleAutoSave();
-
-											if (MappingsCurrentEditIndicator != null)
-											{
-												MappingsCurrentEditIndicator.Text = $"🎯 已对调二级动作顺序：[{srcItem.Name}] ↔ [{tgtItem.Name}]！";
-												MappingsCurrentEditIndicator.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129));
-											}
-											return;
-										}
-									}
-									else
-									{
-										ActionItem srcItem = srcList[srcSubIdx];
-										ActionItem tgtItem = tgtAction.SubActions[targetSubIdx];
-										srcList[srcSubIdx] = tgtItem;
-										tgtAction.SubActions[targetSubIdx] = srcItem;
-
-										SelectSubAction(targetSlot, targetSubIdx);
-										RefreshSlots();
-										RenderMappingsWheelPreview();
-										ScheduleAutoSave();
-
-										if (MappingsCurrentEditIndicator != null)
-										{
-											MappingsCurrentEditIndicator.Text = $"🎯 已跨扇区对调二级动作：[{srcItem.Name}] ↔ [{tgtItem.Name}]！";
-											MappingsCurrentEditIndicator.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129));
-										}
-										return;
-									}
-								}
-								else if (targetSlot != srcSlot)
-								{
-									ActionItem srcItem = srcList[srcSubIdx];
-									srcList.RemoveAt(srcSubIdx);
-									if (tgtAction.SubActions == null) tgtAction.SubActions = new List<ActionItem>();
-									tgtAction.SubActions.Add(srcItem);
-
-									SelectSubAction(targetSlot, tgtAction.SubActions.Count - 1);
-									RefreshSlots();
-									RenderMappingsWheelPreview();
-									ScheduleAutoSave();
-
-									if (MappingsCurrentEditIndicator != null)
-									{
-										MappingsCurrentEditIndicator.Text = $"🎯 已将二级动作 [{srcItem.Name}] 移动至目标扇区！";
-										MappingsCurrentEditIndicator.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129));
-									}
-									return;
-								}
-							}
-						}
-
-						RenderMappingsWheelPreview();
-						return;
+						ProcessCanvasDrop(profile, target, isCtrl);
 					}
-					else if (_dragSourceSlotIndex >= -1)
+					else
 					{
-						// === 一级主扇区 / 中心核圆拖拽换位 ===
-						int targetSlot = -999;
-						if (dist <= coreR)
+						// 无效落点（轮盘外空白区域等）：干净取消，不修改配置，不写盘
+						CancelCanvasDrag();
+					}
+				}
+				else
+				{
+					if (_dragSourceSlotIndex == -1)
+					{
+						_selectedMultiSlots.Clear();
+						ExitBatchModeUi();
+						SelectCenterCore();
+					}
+					else if (_dragSourceSlotIndex >= 0)
+					{
+						bool isCtrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+						if (isCtrl)
 						{
-							targetSlot = -1;
-						}
-						else if (dist <= outerR + 15.0)
-						{
-							targetSlot = (int)Math.Floor((angleDeg + sweep / 2.0) / sweep) % sectorCount;
-						}
-
-						if (targetSlot != -999 && targetSlot != _dragSourceSlotIndex)
-						{
-							bool linkSubActions = ConfigManager.CurrentConfig?.LinkSubActionsWhenDragging ?? true;
-							string srcName = "";
-							string tgtName = "";
-
-							if (_dragSourceSlotIndex == -1)
+							if (_selectedMultiSlots.Contains(_dragSourceSlotIndex))
 							{
-								srcName = profile.CenterAction?.Name ?? "中心核圆";
-								tgtName = (targetSlot >= 0 && targetSlot < profile.Actions.Count) ? profile.Actions[targetSlot].Name : $"槽 {targetSlot + 1}";
-
-								var tgtSub = profile.Actions[targetSlot].SubActions;
-								ActionItem temp = profile.CenterAction ?? new ActionItem { Name = "StarPie控制台", Type = "System", Parameter = "OpenSettings", IconKey = "Settings" };
-								profile.CenterAction = profile.Actions[targetSlot];
-								profile.Actions[targetSlot] = temp;
-
-								if (!linkSubActions)
-								{
-									profile.Actions[targetSlot].SubActions = tgtSub;
-									if (profile.CenterAction != null) profile.CenterAction.SubActions = null;
-								}
-
-								SelectPrimarySlot(targetSlot);
-							}
-							else if (targetSlot == -1)
-							{
-								srcName = (_dragSourceSlotIndex >= 0 && _dragSourceSlotIndex < profile.Actions.Count) ? profile.Actions[_dragSourceSlotIndex].Name : $"槽 {_dragSourceSlotIndex + 1}";
-								tgtName = profile.CenterAction?.Name ?? "中心核圆";
-
-								var srcSub = profile.Actions[_dragSourceSlotIndex].SubActions;
-								ActionItem temp = profile.CenterAction ?? new ActionItem { Name = "StarPie控制台", Type = "System", Parameter = "OpenSettings", IconKey = "Settings" };
-								profile.CenterAction = profile.Actions[_dragSourceSlotIndex];
-								profile.Actions[_dragSourceSlotIndex] = temp;
-
-								if (!linkSubActions)
-								{
-									profile.Actions[_dragSourceSlotIndex].SubActions = srcSub;
-									if (profile.CenterAction != null) profile.CenterAction.SubActions = null;
-								}
-
-								SelectCenterCore();
+								_selectedMultiSlots.Remove(_dragSourceSlotIndex);
 							}
 							else
 							{
-								srcName = (_dragSourceSlotIndex >= 0 && _dragSourceSlotIndex < profile.Actions.Count) ? profile.Actions[_dragSourceSlotIndex].Name : $"槽 {_dragSourceSlotIndex + 1}";
-								tgtName = (targetSlot >= 0 && targetSlot < profile.Actions.Count) ? profile.Actions[targetSlot].Name : $"槽 {targetSlot + 1}";
-
-								var srcSub = profile.Actions[_dragSourceSlotIndex].SubActions;
-								var tgtSub = profile.Actions[targetSlot].SubActions;
-
-								ActionItem temp = profile.Actions[_dragSourceSlotIndex];
-								profile.Actions[_dragSourceSlotIndex] = profile.Actions[targetSlot];
-								profile.Actions[targetSlot] = temp;
-
-								if (!linkSubActions)
-								{
-									profile.Actions[_dragSourceSlotIndex].SubActions = srcSub;
-									profile.Actions[targetSlot].SubActions = tgtSub;
-								}
-
-								SelectPrimarySlot(targetSlot);
+								_selectedMultiSlots.Add(_dragSourceSlotIndex);
 							}
 
-							RefreshSlots();
-							RenderMappingsWheelPreview();
-							ScheduleAutoSave();
-
-							if (MappingsCurrentEditIndicator != null)
+							if (_selectedMultiSlots.Count == 0)
 							{
-								string linkNote = (!linkSubActions) ? "（保持各自二级子菜单不变）" : "";
-								MappingsCurrentEditIndicator.Text = $"🎯 已将 [{srcName}] 与 [{tgtName}] 成功对调位置{linkNote}！";
-								MappingsCurrentEditIndicator.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129));
+								_selectedMultiSlots.Add(_dragSourceSlotIndex);
+								ExitBatchModeUi();
+								SelectPrimarySlot(_dragSourceSlotIndex);
+							}
+							else if (_selectedMultiSlots.Count == 1)
+							{
+								ExitBatchModeUi();
+								SelectPrimarySlot(_selectedMultiSlots[0]);
+							}
+							else
+							{
+								EnterBatchModeUi();
 							}
 						}
 						else
 						{
-							RenderMappingsWheelPreview();
-						}
-					}
-				}
-			}
-			else
-			{
-				if (_dragSourceSlotIndex == -1)
-				{
-					_selectedMultiSlots.Clear();
-					ExitBatchModeUi();
-					SelectCenterCore();
-				}
-				else if (_dragSourceSlotIndex >= 0)
-				{
-					bool isCtrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
-					if (isCtrl)
-					{
-						if (_selectedMultiSlots.Contains(_dragSourceSlotIndex))
-						{
-							_selectedMultiSlots.Remove(_dragSourceSlotIndex);
-						}
-						else
-						{
-							_selectedMultiSlots.Add(_dragSourceSlotIndex);
-						}
-
-						if (_selectedMultiSlots.Count == 0)
-						{
+							_selectedMultiSlots.Clear();
 							_selectedMultiSlots.Add(_dragSourceSlotIndex);
 							ExitBatchModeUi();
 							SelectPrimarySlot(_dragSourceSlotIndex);
 						}
-						else if (_selectedMultiSlots.Count == 1)
-						{
-							ExitBatchModeUi();
-							SelectPrimarySlot(_selectedMultiSlots[0]);
-						}
-						else
-						{
-							EnterBatchModeUi();
-						}
 					}
-					else
+					else if (_dragSourceSlotIndex <= -100)
 					{
 						_selectedMultiSlots.Clear();
-						_selectedMultiSlots.Add(_dragSourceSlotIndex);
 						ExitBatchModeUi();
-						SelectPrimarySlot(_dragSourceSlotIndex);
+						int raw = -_dragSourceSlotIndex - 100;
+						int slot = raw / 100;
+						int subIdx = raw % 100;
+						SelectSubAction(slot, subIdx);
 					}
 				}
-				else if (_dragSourceSlotIndex <= -100)
-				{
-					_selectedMultiSlots.Clear();
-					ExitBatchModeUi();
-					int raw = -_dragSourceSlotIndex - 100;
-					int slot = raw / 100;
-					int subIdx = raw % 100;
-					SelectSubAction(slot, subIdx);
-				}
-			}
 
-			_mappingsDragStartPos = null;
-			_dragSourceSlotIndex = -999;
+				e.Handled = true;
+			}
+		}
+		finally
+		{
+			_isCommittingDrag = false;
 			_isDraggingSlot = false;
-			e.Handled = true;
+			_dragSourceSlotIndex = -999;
+			_mappingsDragStartPos = null;
+			_mappingsPanStartPoint = null;
+			HideCanvasDragOverlays();
+			if (MappingsPreviewViewportContainer != null)
+			{
+				if (MappingsPreviewViewportContainer.IsMouseCaptured)
+				{
+					MappingsPreviewViewportContainer.ReleaseMouseCapture();
+				}
+				MappingsPreviewViewportContainer.Cursor = System.Windows.Input.Cursors.Arrow;
+			}
 		}
 	}
 

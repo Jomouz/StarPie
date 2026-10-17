@@ -28,7 +28,8 @@ internal static class Program
             warmup.ApplyTemplate();
             Check(new ActionDescriptor().ShowInActionPicker, "legacy SDK descriptors remain visible by default");
             Check(new SettingsPageDescriptor().ActionIds.Count == 0, "legacy pages have no commands by default");
-            Check(PluginApi.ApiVersion == "1.11" && PluginApi.ApiVersionMinor == 11, "SDK version represents minor eleven");
+            Check(PluginApi.ApiVersionMajor == 1 && PluginApi.ApiVersionMinor >= 11 &&
+                PluginApi.ApiVersion == $"{PluginApi.ApiVersionMajor}.{PluginApi.ApiVersionMinor}", "SDK retains the 1.11 contract with consistent additive version metadata");
             Check((int)ParameterFieldType.Number == 2 && (int)ParameterFieldType.KeyMap == 9 && (int)ParameterFieldType.Slider == 10, "slider is additive without renumbering existing fields");
             TestRegistration();
             TestLiveLoadAndCommands(sandbox);

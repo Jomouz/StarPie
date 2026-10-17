@@ -46,8 +46,10 @@ internal interface IPluginParameterTarget
 internal sealed class ActionItemParameterTarget : IPluginParameterTarget
 {
     private readonly ActionItem _item;
+    private readonly Func<ActionItem?>? _writeSource;
 
-    public ActionItemParameterTarget(ActionItem item) => _item = item;
+    public ActionItemParameterTarget(ActionItem item, Func<ActionItem?>? writeSource = null)
+    { _item = item; _writeSource = writeSource; }
 
     public IReadOnlyDictionary<string, string>? Stored => _item.ExtensionData;
 
@@ -56,6 +58,17 @@ internal sealed class ActionItemParameterTarget : IPluginParameterTarget
     public bool Write(string key, string? value)
     {
         if (string.IsNullOrEmpty(key)) return false;
+
+        if (_writeSource != null)
+        {
+            // Rendering and unchanged fields must not materialize an inherited action.
+            string? storedValue = null;
+            bool hasStoredValue = _item.ExtensionData?.TryGetValue(key, out storedValue) == true;
+            if (string.IsNullOrEmpty(value) ? !hasStoredValue : hasStoredValue && string.Equals(storedValue, value, StringComparison.Ordinal))
+                return false;
+            ActionItem? writable = _writeSource();
+            return writable != null && new ActionItemParameterTarget(writable).Write(key, value);
+        }
 
         if (string.IsNullOrEmpty(value))
         {
