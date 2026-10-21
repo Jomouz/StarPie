@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://socialify.git.ci/Star-Pie/StarPie/image?font=Inter&amp;forks=1&amp;issues=1&amp;logo=https%3A%2F%2Fraw.githubusercontent.com%2FStar-Pie%2FStarPie%2Fmain%2Fassets%2Flogo_dark.png&amp;name=1&amp;owner=1&amp;pattern=Floating+Cogs&amp;pulls=1&amp;stargazers=1&amp;theme=Auto" width="100%" alt="StarPie 齿轮背景横幅：项目 Logo 与 Stars、Forks、Issues、Pull Requests 统计" />
+<img src="https://socialify.git.ci/Star-Pie/StarPie/image?font=Inter&forks=1&issues=1&logo=https%3A%2F%2Fraw.githubusercontent.com%2FStar-Pie%2FStarPie%2Fmain%2Fassets%2Flogo_dark.png&name=1&owner=1&pattern=Floating+Cogs&pulls=1&stargazers=1&theme=Auto" width="100%" alt="StarPie 齿轮背景横幅：项目 Logo 与 Stars、Forks、Issues、Pull Requests 统计" />
 
 # StarPie (星盘)
 
@@ -21,6 +21,8 @@
 [![赞助页面](https://img.shields.io/badge/Sponsors-Support-EA4AAA?style=flat-square&logo=githubsponsors&logoColor=white)](https://star-pie.github.io/sponsor/)
 
 <br/>
+
+**项目仓库：[GitHub](https://github.com/Star-Pie/StarPie) · [AtomGit](https://atomgit.com/Star-Pie/StarPie)**
 
 **[简体中文](README.md)** • **[English](README_EN.md)**
 
